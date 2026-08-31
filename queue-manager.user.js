@@ -1578,9 +1578,19 @@
     } catch (e) { say(`autopick watcher: ${e.message}`); }
   }, 400);
 
-  const overlayTimer = setInterval(() => { try { renderOverlay(); } catch (e) {} }, 1000);
+  let paintErr = null;
+  const overlayTimer = setInterval(() => {
+    try { renderOverlay(); annotateQueue(); }
+    catch (e) {
+      // Never swallow silently: a throw here previously left the overlay blank
+      // with no explanation anywhere.
+      if (paintErr !== e.message) { paintErr = e.message; say(`paint error: ${e.message}`); }
+    }
+  }, 1000);
   window.__queueStop = () => { clearInterval(timer); clearInterval(overlayTimer); clearInterval(autopickTimer);
-    dialogObserver.disconnect(); if (overlayEl) overlayEl.remove(); say('stopped'); };
+    dialogObserver.disconnect(); if (overlayEl) overlayEl.remove();
+    document.querySelectorAll('.ys-assist').forEach((e) => e.remove());   // leave the queue clean
+    say('stopped'); };
   window.__queueState = state;
   say(`armed — ${CFG.DRY_RUN ? 'DRY RUN' : 'LIVE'}, target ${CFG.QUEUE_SIZE}, slot ${CFG.SLOT}`);
 })();

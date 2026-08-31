@@ -60,6 +60,10 @@
     PLAYOFF_WEEKS: [15, 16, 17],
     PLAYOFF_SWING: 0.10,
 
+    // --- overlay ------------------------------------------------------------
+    // Read-only panel showing the live ranking and why. Off by default.
+    SHOW_OVERLAY: false,
+
     // --- 5. last-second pick ------------------------------------------------
     // Seconds left on YOUR clock at which the manager drafts the top of the queue
     // itself. 0 = never; let the clock expire and Yahoo take the queue top.
@@ -470,13 +474,67 @@
     }).sort((a, b) => b.val - a.val);
   }
 
-  /** Build a coherent n-deep queue, re-ranking after each provisional pick. */
+  /**
+   * Do we pick twice with nobody in between? In a snake the gap to your next pick
+   * is 2(T-s)+1 after an odd round and 2s-1 after an even one, so it equals 1 only
+   * at the two endpoint seats (s = 1 or s = TEAMS). Every middle seat always has
+   * at least one opposing pick in between.
+   */
+  const backToBack = () => gapTo(roundNow()) === 1;
+
+  /** Positions where we can only take one more before hitting the cap. */
+  const isScarce = (pos, have) =>
+    (CFG.CAPS[pos] || 0) - have.filter((h) => h.pos === pos).length === 1;
+
+  /**
+   * Build the queue.
+   *
+   * Slots are a SEQUENCE, not a ranked list: Yahoo consumes them top-down, so
+   * each entry is scored as if the ones above it were already drafted. That alone
+   * stops a five-kicker queue for a one-kicker roster slot.
+   *
+   * One exception. When our next pick is not back to back, the entry after a
+   * scarce pick is a same-position backup rather than the next player in the
+   * sequence — if the drafter ahead of us takes our only kicker, we want the next
+   * kicker at the top, not a receiver.
+   *
+   * That backup is unsafe when we pick twice in a row, because autodraft would
+   * take both and hand us two kickers. Spacing them further down does not help:
+   * whatever sits between them can be sniped too. So when picks are back to back
+   * the queue is a strict sequence, hard-capped at one kicker and one defense.
+   */
   function planQueue(n) {
+    const b2b = backToBack();
     const chosen = [];
-    for (let i = 0; i < n; i++) {
-      const ranked = rankAvailable(chosen);
+    const sequence = [];                 // provisional roster additions
+    while (chosen.length < n) {
+      const ranked = rankAvailable(sequence).filter((p) => !chosen.some((c) => c.id === p.id));
       if (!ranked.length) break;
-      chosen.push(ranked[0]);
+      const pick = ranked[0];
+      chosen.push(pick);
+      sequence.push(pick);
+
+      if (chosen.length === 1 && !b2b && isScarce(pick.pos, roster())) {
+        const backup = rankAvailable([])
+          .find((p) => p.pos === pick.pos && p.id !== pick.id);
+        if (backup && chosen.length < n) {
+          chosen.push(backup);           // insurance only — NOT part of the sequence
+          say(`queue: ${backup.name} added as ${pick.pos} backup behind ${pick.name}`);
+        }
+      }
+    }
+
+    if (b2b) {
+      // Hard guard, independent of how the sequence was built.
+      const seen = { K: 0, DEF: 0 };
+      const capped = chosen.filter((p) => {
+        if (p.pos !== 'K' && p.pos !== 'DEF') return true;
+        return ++seen[p.pos] <= 1;
+      });
+      if (capped.length !== chosen.length) {
+        say(`back-to-back picks — capped queue at one K and one DEF`);
+      }
+      return capped;
     }
     return chosen;
   }

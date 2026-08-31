@@ -198,10 +198,34 @@ is why the pool is pulled per position rather than as one deep Flex query.
 When you draft, the roster changes and every queued player was chosen against
 needs that no longer hold. The manager purges the whole queue and rebuilds it.
 
-Within a single refill pass the queue is also planned *sequentially* — each
-provisional pick is added to a working roster before the next slot is scored.
-Without that, all five slots are scored against the same roster and you get five
-kickers for a one-kicker slot.
+## Queue composition
+
+The queue is a **sequence**, not a ranked list. Yahoo consumes it top-down, so each
+entry is scored as if the ones above it were already drafted. That alone prevents
+five kickers being queued for a one-kicker roster slot.
+
+**One exception: the scarce-position backup.** When your next pick is not back to
+back, the entry directly after a scarce pick is a same-position backup rather than
+the next player in the sequence. If the drafter ahead of you takes your only
+kicker, you want the next kicker at the top of the queue, not a receiver.
+
+**That backup is disallowed when you pick twice in a row.** Autodraft would take
+both and hand you two kickers. Spacing them further apart does not fix it — the
+players in between can be sniped just as easily — so when picks are back to back
+the queue is a strict sequence, hard-capped at one kicker and one defense.
+
+Back-to-back picks are rarer than they look. In a snake the gap to your next pick
+is `2(T−s)+1` after an odd round and `2s−1` after an even one, which equals 1 only
+at the two endpoint seats (`s = 1` or `s = TEAMS`). Every middle seat always has at
+least one opposing pick in between, so the backup is available to them on every
+pick.
+
+## Never during your turn
+
+The manager does not touch the queue while it is your turn, without exception — a
+click landing under your cursor could draft someone you did not choose. Its only
+action during your turn is the `AUTOPICK_AT_SECONDS` safety net, which drafts the
+queue top with the clock nearly expired.
 
 ## Kickers and defenses
 

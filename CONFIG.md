@@ -283,6 +283,20 @@ cannot intercept one or cause a stray draft even if it sits over the Draft butto
 It hides itself whenever a `[role=dialog]` is present, so it can never cover the
 autopick dialog you need to see and dismiss.
 
+## Entries you queued yourself
+
+Anything in the queue that the assistant did not add is treated as yours and is
+**never removed** — not by prune, not by the post-pick rebuild, not by the
+per-position limit. Your entries still count toward queue size and toward
+planning, so the assistant simply stops adding around them rather than
+overruling you. They are marked with a ◆ in the overlay.
+
+Ownership is recorded per draft room in `localStorage`, because a reload would
+otherwise make the assistant's own earlier additions look like yours and freeze
+the queue permanently. The queue itself is still read live every cycle; this only
+records who put each entry there. In a room with no record, everything already
+present is treated as yours, which is the safe default.
+
 ## Never during your turn
 
 The manager does not touch the queue while it is your turn, without exception — a

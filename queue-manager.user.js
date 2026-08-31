@@ -516,9 +516,35 @@
     initialByPos: {},       // depth each position actually yielded on first read
     exhausted: {},          // positions with nothing left to re-read
     working: false,         // true while we are clicking in the queue UI
+    ours: new Set(),        // "NAME|POS" of entries WE added; anything else is yours
   };
 
   const key = (name, pos) => `${name.replace(/\s+/g, ' ').trim().toUpperCase()}|${pos}`;
+
+  /**
+   * Ownership of queue entries. Anything we did not add ourselves belongs to the
+   * human and is never removed — not by prune, not by the post-pick purge, not by
+   * the position limit. Such entries still count toward queue size and planning,
+   * so we simply stop adding around them.
+   *
+   * Persisted per draft room: without that, a reload would make our own earlier
+   * additions look like the human's and freeze the queue permanently. The queue
+   * itself is still read live every cycle; this only records who put each entry
+   * there. On a fresh room with no record, everything present is treated as the
+   * human's, which is the safe default.
+   */
+  const roomId = () => (location.pathname.match(/draftclient\/f1\/(\d+)/) || [])[1] || 'x';
+  function loadOurs() {
+    try {
+      const raw = localStorage.getItem(`ys_ours_${roomId()}`);
+      if (raw) state.ours = new Set(JSON.parse(raw));
+    } catch (e) { /* private browsing */ }
+  }
+  function saveOurs() {
+    try { localStorage.setItem(`ys_ours_${roomId()}`, JSON.stringify([...state.ours])); }
+    catch (e) { /* private browsing */ }
+  }
+  const isOurs = (p) => state.ours.has(key(p.name, p.pos));
 
   function foldPicks() {
     let n = 0;
@@ -962,6 +988,13 @@
       if (seen[p.pos] > positionLimit(p.pos, b2b)) mark(p);
     }
 
+    // Never remove what the human queued themselves.
+    const yours = view.filter((p) => bad.has(`${p.name}|${p.pos}`) && !isOurs(p));
+    if (yours.length) {
+      say(`leaving your own entries alone: ${yours.map((p) => p.name).join(', ')}`);
+      yours.forEach((p) => bad.delete(`${p.name}|${p.pos}`));
+    }
+
     if (!bad.size) return [];
     const out = await removeFromQueue((pl) => bad.has(`${pl.name}|${pl.pos}`));
     await clearFilters();
@@ -970,7 +1003,7 @@
 
   /** Clear the whole queue — used after WE draft, since our needs changed. */
   async function purgeQueue() {
-    const out = await removeFromQueue(() => true);
+    const out = await removeFromQueue((pl) => isOurs(pl));   // yours stays put
     await clearFilters();
     return out.length;
   }
@@ -1036,6 +1069,8 @@
       if (myTurn()) { say('your turn started — stopping refill'); return; }
       if (await toggleQueue(p, true)) {
         state.queue.push(p);
+        state.ours.add(key(p.name, p.pos));
+        saveOurs();
         say(`queued ${p.name} ${p.pos}-${p.team} val ${p.val} (${p.role}, po ${p.playoffMod}, bye ${p.byeMod})`);
       }
     }
@@ -1186,6 +1221,7 @@
         if (!playerTable()) return;          // room not up yet
         await readPool();
         if (!state.pool.size) { say('pool came back empty — not arming, will retry'); return; }
+        loadOurs();
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;
         state.armed = true;
@@ -1288,7 +1324,7 @@
       : model;
     const next = state.armed ? planQueue(3) : [];
 
-    const row = (p, label, dim) => {
+    const row = (p, label, dim, yours) => {
       const bits = [];
       if (p.val === null) bits.push('no longer available');
       else {
@@ -1307,7 +1343,8 @@
       return `<div style="display:flex;gap:6px;margin-top:4px;opacity:${dim ? 0.6 : 1}">` +
         `<span style="color:#7c8894;width:11px">${label}</span>` +
         `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">` +
-        `${esc(p.name)} <span style="color:#7c8894">${esc(p.pos)}${p.team ? '-' + esc(p.team) : ''}</span></span>` +
+        `${esc(p.name)} <span style="color:#7c8894">${esc(p.pos)}${p.team ? '-' + esc(p.team) : ''}</span>` +
+        `${yours ? ' <span style="color:#e0a340" title="you added this; never removed">◆</span>' : ''}</span>` +
         `<span style="color:${p.val > 0 ? '#5cb585' : '#7c8894'};text-align:right;width:46px">` +
         `${p.val === null ? '—' : p.val === Infinity ? 'MUST' : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span></div>` +
         `<div style="color:#7c8894;margin-left:17px;opacity:${dim ? 0.6 : 1}">${bits.join(' · ')}</div>`;
@@ -1325,11 +1362,12 @@
       `${badge !== q.length ? ` <span style="color:#e27a72">badge ${badge}</span>` : ''}</span></div>` +
       `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
       `<span style="flex:1">PLAYER</span><span style="width:46px;text-align:right">GAIN</span></div>` +
-      (q.length ? q.map((p, i) => row(p, i + 1, false)).join('')
+      (q.length ? q.map((p, i) => row(p, i + 1, false, !isOurs(p))).join('')
                 : '<div style="color:#7c8894;margin-top:4px">empty</div>') +
       (next.length ? `<div style="color:#7c8894;border-top:1px dashed #2b333c;margin-top:7px;padding-top:4px">NEXT UP</div>` +
-        next.map((p) => row(p, '·', true)).join('') : '') +
+        next.map((p) => row(p, '·', true, false)).join('') : '') +
       `<div style="color:#7c8894;border-top:1px solid #2b333c;margin-top:7px;padding-top:5px">` +
+      `<b style="color:#e0a340">◆</b> = you queued this; never removed automatically.<br>` +
       `<b style="color:#a7b2bd">GAIN</b> = season points you gain by taking this player ` +
       `now instead of the best one at his position still likely to be there at your ` +
       `next pick. Adjusted down if he can only sit on your bench, and for playoff ` +

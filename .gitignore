@@ -4,3 +4,5 @@ node_modules/
 # never commit Yahoo credentials or tokens
 .env
 *token*.json
+team-context.json
+player-pool.json

@@ -1,72 +1,92 @@
 ---
-name: fantasy-draft
-description: Draft co-pilot for the Yahoo league "Lord of Lifers et al" (ID 813836) — an offline draft with heavily customized scoring. Use when the user is drafting or prepping to draft: "I'm on the clock", "who should I take", "draft help", "my pick", "board", or any question about who to draft in that league.
+name: draft-assistant
+description: Fantasy football draft assistant. Reads the live draft board and NFL team context, then recommends picks. Use when the user is in or preparing for a fantasy football draft, mock or real — "I'm on the clock", "who should I take", "draft help", "start the draft", "read the board".
 ---
 
-# Draft co-pilot — Lord of Lifers et al (813836)
+# Draft assistant
 
-## Read STRATEGY.md first
+Works for mock drafts and real drafts alike. Two data sources, gathered at
+different times, then used together for every pick.
 
-`STRATEGY.md` in this repo is the user's own instructions and the authority on how
-to draft. Read it at the start of every draft session and follow it.
+## 1. Team context — any time before the draft
 
-Its "Locked facts" section is verified data. The "Your strategy" section is the
-user's, and it wins. If their stated strategy conflicts with what the projections
-say, do the thing they asked for and say once, briefly, what the data suggests
-instead — then drop it. Do not relitigate on every pick.
-
-## The draft is offline
-
-There is no Yahoo draft room. The commissioner enters picks afterward, so Yahoo
-never sees the draft happen. Two consequences:
-
-- **No automation applies on draft night.** The autodraft userscript
-  (github.com/jdfree/yahoo-football-autodraft) drives a live draft room; there
-  isn't one. It's for mocks only.
-- **Yahoo's available-player pool is useless during the draft.** It will report
-  every player as available all night. Track the board from what the user tells
-  you: they say each pick as it happens, you maintain the taken list.
-
-## Build the board
-
-Run `extract-board.js` via the browser (Claude in Chrome `javascript_tool`) on any
-`football.fantasysports.yahoo.com` page while logged in. It pulls ~300 players
-whose projections Yahoo has **already scored under this league's custom rules**,
-then computes value over replacement for a 12-team roster.
-
-Refresh it the morning of the draft. Preseason injuries move the numbers.
-
-It leaves `window.__board` in the page. Slice it rather than re-fetching:
-
-```js
-window.__board.filter(x => !taken.has(x.n)).sort((a,b) => b.v - a.v).slice(0,12)
-  .map(x => `${x.n}|${x.p}|v${x.v}|bye${x.bye}`)
+```bash
+node fetch-team-context.js
 ```
 
-The `rk` field is Yahoo's preseason overall rank and is **not** league-adjusted.
-`proj` and `v` are. A player with poor `v` but strong `rk` is one the rest of the
-room will overdraft — let them.
+Pulls ESPN's Football Power Index and the full season schedule grid, joins them,
+and writes `team-context.json`: per team its FPI, offensive/defensive/special-teams
+EPA, bye week, full 18-week schedule, and strength of schedule for both the whole
+season and the fantasy playoff weeks.
+
+Static preseason data — no draft room needed, and it does not change during the
+draft. Refresh it the morning of. Use `--playoffs 15,16,17` to match the league's
+playoff weeks.
+
+It self-validates: 272 games, one bye per team, every matchup reciprocated with
+opposite home/away. If ESPN changes their page structure it fails loudly rather
+than producing a half-parsed table.
+
+## 2. Player pool — immediately at draft start
+
+The draft room publishes projected points for every player, **already scored under
+that league's rules**, plus ADP. This never changes during the draft, so read it
+once, as soon as the room opens, and cache it.
+
+Read depth:
+
+| Positions | Depth |
+| --- | --- |
+| QB, TE | top 75 each |
+| WR / RB / Flex | top 300 |
+| K, DEF | all |
+
+Capture at minimum: name, position, NFL team, projected points, ADP, bye week.
+
+Speed matters here — the read must land before the first picks are made, so favour
+one bulk pass over incremental scraping.
+
+## 3. During the draft
+
+Never carry an external ranked board and match players by name. The draft room
+abbreviates to a first initial and initials collide — `B. Robinson` and `J. Love`
+each match two different players at two different positions. Work from the row you
+evaluated, and click that same row.
+
+Value a player as:
+
+```
+raw   = projected points − best projection at that position still expected at your next turn
+value = raw × 1.0   fills an empty starting slot
+        raw × 0.9   fills flex
+        raw × 0.2   bench only
+```
+
+Estimate attrition with ADP: the `gap` lowest-ADP players come off the board before
+your next turn, where `gap` is the snake distance (`2 × (teams − slot) + 1` in odd
+rounds, `2 × slot − 1` in even rounds).
+
+This prices positional scarcity without being told the scoring rules. A position
+where everyone projects similarly is correctly treated as low-value even when the
+raw numbers look huge.
+
+Layer team context on top: strength of schedule during the fantasy playoffs, and
+bye-week collisions among players you already hold.
 
 ## On the clock
 
-Lead with the name. One line of why. Two fallbacks. No preamble, no tool
-narration.
+Lead with the name. One line of why. Two fallbacks. No preamble, no narration of
+tool calls.
 
 ```
-**Trey McBride (TE, ARI)** — biggest positional edge left; TE1 to TE12 is an
-85-point cliff and Yahoo ranks him 30th.
+**Trey McBride (TE, ARI)** — biggest positional edge left; the drop to the next
+tight end is 60 points.
 Fallbacks: Jeremiyah Love (RB, v71) · Zay Flowers (WR, v62)
 ```
 
-Weigh in this order: value over replacement, then picks until the user's next turn
-(slot 3 waits 19 picks between rounds 1 and 2 — the longest gap in the draft), then
-bye collisions after round 8, then handcuffs with the last two bench spots.
+## Keeping the roster legal
 
-Honor the cautions in `STRATEGY.md` — especially verifying large
-projection-vs-rank gaps before spending an early pick on one.
-
-## After the draft
-
-`ff_get_draft_results` stays empty until the commissioner enters picks. Grade off
-the board instead: sum the starters' projections, name the thinnest position, and
-list the best undrafted players by `v` as week-1 waiver targets.
+- Force any unfilled required position once rounds remaining equals slots missing.
+  Permitting a defense late is not the same as requiring one.
+- Exclude players already rostered — re-picking one is a silent no-op.
+- Kickers and defenses in the final two rounds only.

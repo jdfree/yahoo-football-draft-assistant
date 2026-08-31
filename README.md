@@ -1,49 +1,73 @@
 # yahoo-football-draft-assistant
 
-Personal draft co-pilot for the Yahoo league **Lord of Lifers et al** (ID# 813836),
-team *Purdy Good*, drafting from slot 3.
+A fantasy football draft assistant. Works for mock drafts and real drafts.
 
-The league drafts **offline** — no Yahoo draft room, the commissioner enters picks
-afterward. So this repo is a co-pilot, not an automaton: it builds a board under
-the league's real scoring, and you tell it picks as they happen.
+It builds its picture from two places: NFL team strength and schedule from ESPN,
+gathered before the draft, and the live player pool read out of the draft room the
+moment it opens. Both feed a single valuation that prices positional scarcity
+without needing to be told the league's scoring rules.
 
-For automating a *live* Yahoo draft room or a mock, see the separate
-[yahoo-football-autodraft](../yahoo-football-autodraft) repo.
+To automate a Yahoo draft room end to end instead, see
+[yahoo-football-autodraft](https://github.com/jdfree/yahoo-football-autodraft).
 
-## Contents
-
-| File | What it is |
-| --- | --- |
-| `STRATEGY.md` | **The input.** Your draft instructions. Edit this. |
-| `SKILL.md` | The Claude skill. Reads `STRATEGY.md` and follows it. |
-| `extract-board.js` | Pulls ~300 players with projections already scored under this league's rules, ranked by value over replacement |
-| `draft-board.html` | Source of the published round-by-round cheat sheet |
-
-## Install
+## Team context
 
 ```bash
-ln -s ~/git/yahoo-football-draft-assistant ~/.claude/skills/fantasy-draft
+node fetch-team-context.js                 # writes team-context.json
+node fetch-team-context.js --playoffs 14,15,16
 ```
 
-Then edit `STRATEGY.md`. Claude reads it at the start of every draft session and
-treats your wording as authoritative.
+Node 18+, no dependencies. Reads:
 
-## Why the scoring matters here
+- [ESPN FPI](https://www.espn.com/nfl/fpi) — Football Power Index, offensive /
+  defensive / special-teams EPA
+- [ESPN schedule grid](https://www.espn.com/nfl/schedulegrid) — all 18 weeks
 
-This league pays **0.5 per completion** (Yahoo default: 0) and **6 per passing TD**
-(default: 4). That inflates every quarterback into the 420–540 range, which reads
-as "quarterbacks are enormously valuable."
+and writes per team: FPI and rank, EPA splits, bye week, the full schedule, and
+strength of schedule for both the full season and the fantasy playoff weeks
+(mean opponent FPI; rank 1 = easiest).
 
-It is the opposite. The rule lifts the floor as much as the ceiling, so 75 points
-separate QB1 from QB18 where 117 separate RB1 from RB18. Quarterback is the
-flattest position on the board, and every default ranking gets this wrong for this
-league.
+```
+Rank Team  FPI    Bye  SoS(season)  SoS(playoffs)
+  1 LAR    5.6   11     0.81 (#31)      1.83 (#26)
+  2 BUF      4    7    -0.08 (#12)      -1.1 (#10)
+  3 BAL    3.7   13     -0.61 (#5)       -1.6 (#6)
+```
 
-Details, and the derived round-by-round plan, are in `STRATEGY.md`.
+This is static preseason data with no dependency on a draft room, so run it
+whenever — ideally the morning of, since FPI moves through the preseason.
 
-## Refreshing the board
+**It validates itself.** 272 games, exactly one bye per team, and every matchup
+reciprocated with opposite home/away. A silent mis-parse is the real risk with
+scraped data, so the script fails loudly instead of emitting a half-built table.
 
-Run `extract-board.js` through Claude in Chrome on any logged-in
-`football.fantasysports.yahoo.com` page. Do it the morning of the draft —
-preseason injuries move the numbers, and the pull in `STRATEGY.md` is from
-2026-08-27.
+One quirk worth knowing: ESPN serves a JavaScript bot-challenge page to clients
+claiming to be Chrome, and the real HTML to anything that identifies honestly as a
+script. The script therefore sends its own user-agent. Do not "fix" it by pasting
+in a browser user-agent — that is what breaks it.
+
+## Player pool
+
+Read once, immediately at draft start, and cached — projected points and ADP do
+not change during a draft. Depth: top 75 QB and TE, top 300 WR/RB/Flex, all
+kickers and defenses, capturing NFL team, projected points, ADP and bye.
+
+*(Script pending.)*
+
+## How it values a player
+
+```
+raw   = projected points − best projection at that position still expected at your next turn
+value = raw × 1.0   fills an empty starting slot
+        raw × 0.9   fills flex
+        raw × 0.2   bench only
+```
+
+Attrition before your next turn is estimated from ADP over the snake gap. The
+result handles unusual scoring on its own: a position where every startable player
+projects about the same is correctly valued near zero, however large the raw
+numbers look.
+
+## License
+
+MIT

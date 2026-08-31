@@ -662,7 +662,13 @@
     if (missing.length >= picksLeft && picksLeft > 0) {
       return avail.filter((p) => p.pos === missing[0])
         .sort((a, b) => b.proj - a.proj)
-        .map((p) => ({ ...p, val: Infinity, why: `must-fill ${missing[0]}` }));
+        // Return the SAME shape as a normal ranking: a partial object here threw
+        // inside the overlay ("reading 'toFixed' of undefined"), and because the
+        // tick renders the overlay directly it surfaced as an opaque tick ERROR.
+        .map((p) => ({ ...p, val: Infinity, sortVal: Infinity, raw: p.proj,
+                       playoffDelta: 0, playoffMod: 1, byeMod: 1, teamMod: 1,
+                       depthMult: 1, role: 'must-fill',
+                       why: `must-fill ${missing[0]}` }));
     }
 
     const byPos = {};
@@ -1402,7 +1408,7 @@
       const bits = [];
       if (p.val === null) bits.push('no longer available');
       else {
-        const repl = p.proj - (p.raw ?? 0);
+        const repl = p.proj - (Number.isFinite(p.raw) ? p.raw : 0);
         bits.push(`scores ${Math.round(p.proj)}`);
         bits.push(`${Math.round(repl)} if you wait`);
         if (p.role === 'starter') bits.push(`fills ${p.pos} slot`);
@@ -1421,11 +1427,12 @@
         `${esc(p.name)} <span style="color:#7c8894">${esc(p.pos)}${p.team ? '-' + esc(p.team) : ''}</span>` +
         `${yours ? ' <span style="color:#e0a340" title="you added this; never removed">◆</span>' : ''}</span>` +
         `<span style="color:${p.val > 0 ? '#5cb585' : '#7c8894'};text-align:right;width:44px">` +
-        `${p.val === null ? '—' : p.val === Infinity ? 'MUST' : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span>` +
+        `${!Number.isFinite(p.val) ? (p.val === Infinity ? 'MUST' : '—')
+           : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span>` +
         // Playoff schedule shown separately, never folded into the value above.
         `<span style="text-align:right;width:38px;color:${!p.playoffDelta ? '#7c8894'
           : p.playoffDelta > 0 ? '#5cb585' : '#e27a72'}">` +
-        `${!p.playoffDelta || p.val === null || p.val === Infinity ? ''
+        `${!Number.isFinite(p.playoffDelta) || !p.playoffDelta || !Number.isFinite(p.val) ? ''
           : (p.playoffDelta > 0 ? '+' : '−') + Math.abs(p.playoffDelta).toFixed(1)}</span></div>` +
         `<div style="color:#7c8894;margin-left:17px;opacity:${dim ? 0.6 : 1}">${bits.join(' · ')}</div>`;
     };

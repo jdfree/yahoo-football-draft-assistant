@@ -77,6 +77,12 @@
     // that never triggers.
     AUTOPICK_AT_SECONDS: 0,
 
+    // Kickers and defenses are barred until the last two rounds. Their surplus
+    // over "wait until the end" is real but small, and spending an early pick on
+    // one costs a starter-quality skill player worth far more. Without this gate a
+    // live draft queued a defense in round two.
+    LATE_ONLY: ['K', 'DEF'],
+
     // --- 4. bye weeks -------------------------------------------------------
     // 0 ignores byes entirely. 1 means a player whose bye would leave a starting
     // slot empty is worth nothing. Scales with how badly the bye collides.
@@ -507,7 +513,13 @@
     const flexUsed = ['RB', 'WR', 'TE']
       .reduce((n, p) => n + Math.max(0, count(p) - CFG.STARTERS[p]), 0);
 
-    return avail.filter((p) => count(p.pos) < CFG.CAPS[p.pos]).map((p) => {
+    const legal = (p) => {
+      if (count(p.pos) >= CFG.CAPS[p.pos]) return false;
+      if (CFG.LATE_ONLY.includes(p.pos) && rd < size - 1) return false;
+      return true;
+    };
+
+    return avail.filter(legal).map((p) => {
       const raw = p.proj - replacement(p.pos);
 
       let weight = CFG.WEIGHT_STARTER, role = 'starter';

@@ -695,8 +695,14 @@
     // they are not. That inflated replacement level at any position holding a
     // projection/ADP outlier, making everyone there look less valuable than they
     // were. Each signal is now used for what it actually measures.
-    const goneIds = new Set(
-      [...avail].sort((a, b) => a.adp - b.adp).slice(0, horizon).map((p) => p.id));
+    // Most of the pool carries no ADP at all (the column shows "–"), and those
+    // were stored as 999 — which made them immortal in this model: never among
+    // the lowest ADP, so never predicted gone. Rank them by projection instead,
+    // after everyone with a real ADP, so the good ones can still be taken.
+    const withAdp = avail.filter((p) => p.adp < 900).sort((a, b) => a.adp - b.adp);
+    const noAdp = avail.filter((p) => p.adp >= 900).sort((a, b) => b.proj - a.proj);
+    const draftOrder = [...withAdp, ...noAdp];
+    const goneIds = new Set(draftOrder.slice(0, horizon).map((p) => p.id));
 
     /**
      * Replacement level differs by position.
@@ -708,13 +714,21 @@
      * there is no meaningful middle. Replacement is therefore the best one still
      * on the board once every other team has taken theirs, i.e. TEAMS-1 deep.
      */
-    const replacement = (pos) => {
-      const l = byPos[pos];                       // sorted by projection, desc
+    /**
+     * What you would get INSTEAD of this player if you passed on him.
+     *
+     * `exceptId` matters: replacement was previously computed once per position
+     * and reused, so the best available player at a position was his own
+     * replacement and his surplus came out as zero — the model literally
+     * concluded "if I pass on the top receiver, the top receiver will still be
+     * there". A player is never his own fallback.
+     */
+    const replacement = (pos, exceptId) => {
+      const l = byPos[pos].filter((p) => p.id !== exceptId);   // sorted by projection
       if (!l.length) return 0;
       if (pos === 'K' || pos === 'DEF') {
         return (l[Math.min(l.length - 1, CFG.TEAMS - 1)] || l[l.length - 1]).proj;
       }
-      // Best projection among those ADP says are still on the board.
       const survivor = l.find((p) => !goneIds.has(p.id));
       return (survivor || l[l.length - 1]).proj;
     };
@@ -731,7 +745,7 @@
     return avail.filter(legal).map((p) => {
       const teamMod = sameTeamMultiplier(p, have);
       const effProj = p.proj * teamMod;          // the penalty lands on the projection
-      const raw = effProj - replacement(p.pos);
+      const raw = effProj - replacement(p.pos, p.id);
 
       let weight = CFG.WEIGHT_STARTER, role = 'starter';
       if (count(p.pos) >= CFG.STARTERS[p.pos]) {

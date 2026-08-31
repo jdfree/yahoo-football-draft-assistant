@@ -169,6 +169,17 @@ say) and made everyone at that position look less valuable than they were. Each
 signal is now used for what it actually measures: ADP for *who* goes, projection
 for *what they are worth*.
 
+**A player is never his own replacement.** Replacement is computed excluding the
+player being valued. Previously it was computed once per position and reused, so
+the best available player at a position came out with zero surplus — the model
+literally concluded "if I pass on the top receiver, the top receiver will still be
+there."
+
+**Players without an ADP are ranked by projection, not treated as immortal.** Most
+of the pool carries no ADP (the column shows "–"). Storing those as 999 meant they
+were never among the lowest-ADP players and so were never predicted to be drafted
+at all. They now sort by projection behind everyone with a real ADP.
+
 Kickers and defenses are exempt, as always — their replacement is the best one left
 after every other team has taken theirs.
 

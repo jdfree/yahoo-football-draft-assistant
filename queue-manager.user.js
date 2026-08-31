@@ -378,6 +378,7 @@
   // takes a moment to re-render. Without a cooldown we clicked it repeatedly and
   // risked toggling it straight back ON.
   let lastToggle = 0;
+  let lastDismiss = 0;
   /**
    * The autopick dialog cannot be found in the DOM at all — its text is not in
    * document.body, so Yahoo renders it in a CLOSED shadow root that
@@ -421,8 +422,15 @@
         .find((b) => /close|dismiss|ok|got it|×|✕/i.test(b.innerText || b.getAttribute('aria-label') || ''))
         || [...modal.querySelectorAll('button')].find((b) => b.querySelector('svg'))
         || [...modal.querySelectorAll('button')].pop();
-      if (close) { close.click(); say('dismissed autopick dialog'); acted = true; }
-      else { dismissByEscape(); say('dismissed autopick dialog via Escape'); acted = true; }
+      // Cooldown: the MutationObserver calls this many times a second and the
+      // dialog takes a moment to tear down, so without it the log fills with
+      // dozens of identical dismissals per second.
+      if (Date.now() - lastDismiss > 2000) {
+        lastDismiss = Date.now();
+        if (close) { close.click(); say('dismissed autopick dialog'); }
+        else { dismissByEscape(); say('dismissed autopick dialog via Escape'); }
+        acted = true;
+      }
     }
 
     // Separately: put autodraft back off. The toggle needs a beat to re-render, so
@@ -923,8 +931,31 @@
       sel.dispatchEvent(new Event('change', { bubbles: true }));
       await sleep(800);
     }
-    const byPos = [...state.pool.values()].reduce((a, p) => (a[p.pos] = (a[p.pos] || 0) + 1, a), {});
-    say(`pool read complete: ${state.pool.size} — ${JSON.stringify(byPos)}`);
+    // Verification pass: a position that came back nearly empty was read while the
+    // table was churning, not because the players do not exist. Re-read those once.
+    const counts = () => [...state.pool.values()].reduce((a, p) => (a[p.pos] = (a[p.pos] || 0) + 1, a), {});
+    const thin = Object.entries({ QB: 20, RB: 20, WR: 20, TE: 20, K: 10, DEF: 10 })
+      .filter(([pos, min]) => (counts()[pos] || 0) < min)
+      .map(([pos]) => POS_LABEL[pos]);
+    if (thin.length && sel) {
+      say(`pool: thin after first pass (${thin.join(', ')}) — re-reading`);
+      for (const label of thin) {
+        const opt = [...sel.options].find((o) => o.text.trim() === label);
+        if (!opt) continue;
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(1800);
+        let added = 0;
+        for (const p of readRows()) if (!state.pool.has(p.id)) { state.pool.set(p.id, p); added++; }
+        say(`pool: ${label} re-read +${added}`);
+      }
+      if (prev !== undefined) {
+        sel.value = prev;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(800);
+      }
+    }
+    say(`pool read complete: ${state.pool.size} — ${JSON.stringify(counts())}`);
   }
 
   window.__queueDump = () => {

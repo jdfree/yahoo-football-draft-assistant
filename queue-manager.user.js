@@ -93,6 +93,13 @@
     // replacement level is what would survive two full rounds of attrition.
     SKIP_ROUNDS: 2,
 
+    // How much ADP scatters, in picks. A hard cutoff treats ADP as a promise —
+    // "ADP 130 will definitely last to pick 129" — when it is only an average.
+    // The top-projected player at a position is precisely who a value-drafter
+    // reaches for, so he is far likelier to go early than his ADP suggests.
+    // Larger values assume more randomness in the room.
+    ADP_SIGMA: 12,
+
     // --- backup depth at RB/WR ----------------------------------------------
     // Injuries and bye-week holes are needed far more often at running back and
     // receiver than at quarterback or tight end, where one starter usually
@@ -683,6 +690,10 @@
       byPos[pos] = avail.filter((p) => p.pos === pos).sort((a, b) => b.proj - a.proj);
     }
 
+    // Where we are in the draft, for turning ADP into a survival probability.
+    const pickMatch = document.body.innerText.match(/Round\s*\d+,\s*Pick\s*(\d+)/i);
+    const currentPick = pickMatch ? +pickMatch[1] : (rd - 1) * CFG.TEAMS + CFG.SLOT;
+
     // How many picks pass before we would realistically come back to a position.
     // Summing gapTo over successive rounds handles the snake: from any pick to the
     // same slot two rounds later is exactly 2 x TEAMS.
@@ -695,14 +706,30 @@
     // they are not. That inflated replacement level at any position holding a
     // projection/ADP outlier, making everyone there look less valuable than they
     // were. Each signal is now used for what it actually measures.
-    // Most of the pool carries no ADP at all (the column shows "–"), and those
-    // were stored as 999 — which made them immortal in this model: never among
-    // the lowest ADP, so never predicted gone. Rank them by projection instead,
-    // after everyone with a real ADP, so the good ones can still be taken.
+    // Most of the pool carries no ADP (the column shows "–"), and storing those
+    // as 999 made them immortal — never among the lowest ADP, so never predicted
+    // gone. Give them an effective ADP just past the real ones, ordered by
+    // projection, so the good ones can still be taken.
     const withAdp = avail.filter((p) => p.adp < 900).sort((a, b) => a.adp - b.adp);
     const noAdp = avail.filter((p) => p.adp >= 900).sort((a, b) => b.proj - a.proj);
-    const draftOrder = [...withAdp, ...noAdp];
-    const goneIds = new Set(draftOrder.slice(0, horizon).map((p) => p.id));
+    const lastReal = withAdp.length ? withAdp[withAdp.length - 1].adp : currentPick;
+    const effAdp = new Map();
+    withAdp.forEach((p) => effAdp.set(p.id, p.adp));
+    noAdp.forEach((p, i) => effAdp.set(p.id, lastReal + 1 + i));
+
+    /**
+     * Probability a player is still on the board when we next consider his
+     * position. ADP is a mean, not a guarantee, so this is a logistic curve
+     * around the horizon rather than a step function: a player whose ADP sits
+     * exactly at the horizon is a coin flip, not a certainty either way.
+     */
+    const deadline = currentPick + horizon;
+    // Our final pick of the draft, used for kickers and defenses.
+    const endDeadline = currentPick + Math.max(1, size - have.length) * CFG.TEAMS;
+    const survivesBy = (p, by) => {
+      const a = effAdp.get(p.id) ?? by;
+      return 1 / (1 + Math.exp((by - a) / Math.max(1, CFG.ADP_SIGMA)));
+    };
 
     /**
      * Replacement level differs by position.
@@ -723,24 +750,46 @@
      * concluded "if I pass on the top receiver, the top receiver will still be
      * there". A player is never his own fallback.
      */
+    /**
+     * The EXPECTED best player still available at this position when we come back
+     * to it — a probability-weighted blend, not the first name that clears a
+     * cutoff. Walking the list by projection, each player contributes his
+     * projection times the chance he is the best one left: he survives and
+     * everyone better than him does not.
+     *
+     * `exceptId` matters: a player is never his own fallback. Reusing one
+     * replacement per position made the best available player score zero surplus.
+     */
     const replacement = (pos, exceptId) => {
       const l = byPos[pos].filter((p) => p.id !== exceptId);   // sorted by projection
       if (!l.length) return 0;
-      if (pos === 'K' || pos === 'DEF') {
-        return (l[Math.min(l.length - 1, CFG.TEAMS - 1)] || l[l.length - 1]).proj;
+      // Kickers and defenses are measured against the END of the draft, not the
+      // next couple of rounds — the real choice is "one now" versus "one with the
+      // last pick". They use the SAME probabilistic machinery so everything stays
+      // on one scale; only the deadline differs. Leaving them on a fixed
+      // "twelve deep" rule while skill positions moved to expected replacement
+      // made K and DEF look far worse than they are.
+      const by = (pos === 'K' || pos === 'DEF') ? endDeadline : deadline;
+      let remaining = 1;          // chance everyone better has already gone
+      let expected = 0;
+      for (const p of l) {
+        const sv = survivesBy(p, by);
+        expected += p.proj * remaining * sv;
+        remaining *= (1 - sv);
+        if (remaining < 0.01) break;
       }
-      const survivor = l.find((p) => !goneIds.has(p.id));
-      return (survivor || l[l.length - 1]).proj;
+      // Whatever probability is left over means nobody useful survives.
+      return expected + remaining * l[l.length - 1].proj;
     };
 
     const flexUsed = ['RB', 'WR', 'TE']
       .reduce((n, p) => n + Math.max(0, count(p) - CFG.STARTERS[p]), 0);
 
-    const legal = (p) => {
-      if (count(p.pos) >= CFG.CAPS[p.pos]) return false;
-      if (CFG.LATE_ONLY.includes(p.pos) && rd < size - 1) return false;
-      return true;
-    };
+    // The cap is a hard exclusion. The late-round gate is NOT: it blocks
+    // selection only, so gated players are still valued and the overlay can
+    // explain them rather than showing a blank row.
+    const legal = (p) => count(p.pos) < CFG.CAPS[p.pos];
+    const isGated = (p) => CFG.LATE_ONLY.includes(p.pos) && rd < size - 1;
 
     return avail.filter(legal).map((p) => {
       const teamMod = sameTeamMultiplier(p, have);
@@ -772,6 +821,7 @@
       return { ...p, raw: +raw.toFixed(2), val: +val.toFixed(2),
                playoffDelta: +playoffDelta.toFixed(2),
                sortVal: +(val * pm * depth).toFixed(2), depthMult: depth, role,
+               gated: isGated(p),
                playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3), teamMod: +teamMod.toFixed(3),
                why: `${p.proj} - repl ${(p.proj - raw).toFixed(1)} = ${raw.toFixed(1)}` +
                     ` x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` };
@@ -887,6 +937,7 @@
     while (chosen.length < n) {
       const ranked = rankAvailable(sequence)
         .filter((p) => !chosen.some((c) => c.id === p.id))
+        .filter((p) => !p.gated)                       // late-round gate applies here
         .filter((p) => (posCount[p.pos] || 0) < positionLimit(p.pos, b2b));
       if (!ranked.length) break;
       const pick = ranked[0];
@@ -1452,6 +1503,7 @@
         if (p.teamMod && p.teamMod < 1) bits.push(`teammate −${((1 - p.teamMod) * 100).toFixed(0)}%`);
         // Ranked-up for depth, but the GAIN shown stays the honest figure.
         if (p.depthMult && p.depthMult > 1) bits.push(`depth ×${p.depthMult} (rank only)`);
+        if (p.gated) bits.push('held until the last rounds');
       }
       return `<div style="display:flex;gap:6px;margin-top:4px;opacity:${dim ? 0.6 : 1}">` +
         `<span style="color:#7c8894;width:11px">${label}</span>` +

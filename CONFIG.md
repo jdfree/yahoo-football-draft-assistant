@@ -180,8 +180,22 @@ of the pool carries no ADP (the column shows "–"). Storing those as 999 meant 
 were never among the lowest-ADP players and so were never predicted to be drafted
 at all. They now sort by projection behind everyone with a real ADP.
 
-Kickers and defenses are exempt, as always — their replacement is the best one left
-after every other team has taken theirs.
+**ADP is treated as a mean, not a promise.** `ADP_SIGMA` (default 12 picks) sets how
+much it scatters. Replacement is the *expected* best player still available —
+walking the position by projection, each player contributes his projection times
+the chance he is the one left: he survives and everyone better does not. A hard
+cutoff instead claimed a player with ADP 130 was certain to last to pick 129, when
+the top-projected player at a position is exactly who a value-drafter reaches for.
+
+Kickers and defenses use the same machinery, measured against your **final pick of
+the draft** rather than the next couple of rounds — the real choice there is one now
+versus one with the last pick. Keeping them on a separate fixed rule while skill
+positions moved to expected replacement put the two on different scales and made
+K and DEF look far worse than they were.
+
+The late-round gate on kickers and defenses blocks **selection only**, not
+valuation — so they still carry real numbers in the overlay, annotated *held until
+the last rounds*, rather than appearing as blank rows.
 
 ## Backup depth at RB and WR
 

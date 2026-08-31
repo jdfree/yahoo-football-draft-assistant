@@ -330,27 +330,51 @@
    * mid-turn, or if Yahoo cleared the queue, having nothing to pick is strictly
    * worse than picking the top of the board.
    */
-  async function draftQueueTop() {
-    let pl = state.queue.length ? state.queue[0] : null;
-    let via = 'queue top';
-    if (!pl) {
-      pl = planQueue(1)[0];
-      via = 'best available (queue empty)';
+  /** Find a player's row in the table, searching for them if necessary. */
+  async function findPlayerRow(pl) {
+    const byId = () => pl.id
+      ? document.querySelector(`.ys-player[data-id="${pl.id}"]`)?.closest('tr')
+      : null;
+    const byName = () => [...document.querySelectorAll('table tbody tr')].find((r) => {
+      const el = r.querySelector('.ys-player');
+      const q = el && parsePlayer(el);
+      return q && q.name === pl.name && q.pos === pl.pos;
+    });
+    let row = byId() || byName();
+    if (row) return row;
+    // Not on screen: search for them, and give the table time to re-render.
+    setSearch((pl.name || '').replace(/^[A-Z]\.\s*/, ''));
+    for (let i = 0; i < 4 && !row; i++) {
+      await sleep(500);
+      row = byId() || byName();
     }
-    if (!pl) { say('autopick: nothing to draft'); return false; }
+    return row;
+  }
 
-    let row = document.querySelector(`.ys-player[data-id="${pl.id}"]`)?.closest('tr');
-    if (!row) {
-      setSearch((pl.name || '').replace(/^[A-Z]\.\s*/, ''));
-      await sleep(700);
-      row = document.querySelector(`.ys-player[data-id="${pl.id}"]`)?.closest('tr');
+  /**
+   * Draft with the clock nearly expired. Works down the queue and then the board,
+   * because a single failed lookup must not cost the pick — the Draft button only
+   * exists during our turn and only on a row that is actually rendered.
+   */
+  async function draftQueueTop() {
+    const candidates = [...state.queue];
+    const best = planQueue(1)[0];
+    if (best) candidates.push(best);                 // last resort: best available
+    if (!candidates.length) { say('autopick: nothing to draft'); return false; }
+
+    for (const pl of candidates) {
+      const row = await findPlayerRow(pl);
+      const btn = row && [...row.querySelectorAll('button')]
+        .find((b) => /^draft$/i.test((b.innerText || '').trim()));
+      if (!btn) { say(`autopick: no Draft button for ${pl.name}, trying next`); continue; }
+      btn.click();
+      say(`AUTOPICK at ${secondsLeft()}s — drafted ${pl.name} (${pl.pos})`);
+      setSearch('');
+      return true;
     }
-    const btn = row && [...row.querySelectorAll('button')]
-      .find((b) => /^draft$/i.test((b.innerText || '').trim()));
-    if (!btn) { say(`autopick: no Draft button for ${pl.name}`); return false; }
-    btn.click();
-    say(`AUTOPICK at ${secondsLeft()}s — drafted ${pl.name} (${pl.pos}) via ${via}`);
-    return true;
+    say('autopick: could not draft any candidate');
+    setSearch('');
+    return false;
   }
 
   /**

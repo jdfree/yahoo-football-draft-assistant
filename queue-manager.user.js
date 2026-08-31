@@ -309,22 +309,32 @@
    * Draft the top of our queue with the clock nearly expired. Only ever called
    * during your own turn, and only inside the final AUTOPICK_AT_SECONDS.
    */
+  /**
+   * Draft with the clock nearly expired. Prefers the top of our queue, but falls
+   * back to the best available player if the queue model is empty — after a reload
+   * mid-turn, or if Yahoo cleared the queue, having nothing to pick is strictly
+   * worse than picking the top of the board.
+   */
   async function draftQueueTop() {
-    const id = state.queued[0];
-    const pl = id && state.pool.get(id);
-    if (!pl) { say('autopick threshold hit but queue is empty'); return false; }
+    let pl = state.queued.length ? state.pool.get(state.queued[0]) : null;
+    let via = 'queue top';
+    if (!pl) {
+      pl = planQueue(1)[0];
+      via = 'best available (queue empty)';
+    }
+    if (!pl) { say('autopick: nothing to draft'); return false; }
+
     let row = document.querySelector(`.ys-player[data-id="${pl.id}"]`)?.closest('tr');
     if (!row) {
-      setSearch(pl.name.replace(/^[A-Z]\.\s*/, ''));
-      await sleep(800);
+      setSearch((pl.name || '').replace(/^[A-Z]\.\s*/, ''));
+      await sleep(700);
       row = document.querySelector(`.ys-player[data-id="${pl.id}"]`)?.closest('tr');
     }
-    // The Draft button only exists in rows while it is your turn.
     const btn = row && [...row.querySelectorAll('button')]
       .find((b) => /^draft$/i.test((b.innerText || '').trim()));
     if (!btn) { say(`autopick: no Draft button for ${pl.name}`); return false; }
     btn.click();
-    say(`autopick at ${secondsLeft()}s — drafted ${pl.name} (${pl.pos}) from queue top`);
+    say(`AUTOPICK at ${secondsLeft()}s — drafted ${pl.name} (${pl.pos}) via ${via}`);
     return true;
   }
 

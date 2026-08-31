@@ -897,8 +897,18 @@
         sel.dispatchEvent(new Event('change', { bubbles: true }));
         await sleep(1500);
       }
+      // Retry: a read taken while the table is mid-render yields nothing, and a
+      // silent zero here leaves the whole assistant inert with an empty pool.
+      let rows = [];
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        rows = readRows();
+        if (rows.length) break;
+        say(`pool: ${label} empty on attempt ${attempt} ` +
+            `(table=${!!playerTable()} cols=${JSON.stringify(columns())})`);
+        await sleep(1200);
+      }
       let added = 0;
-      for (const p of readRows()) if (!state.pool.has(p.id)) { state.pool.set(p.id, p); added++; }
+      for (const p of rows) if (!state.pool.has(p.id)) { state.pool.set(p.id, p); added++; }
       say(`pool: ${label} +${added}`);
     }
     if (sel && prev !== undefined) {
@@ -978,9 +988,17 @@
     try {
       ensureLiveDrafting();
 
+      // An empty pool at any point means the assistant is inert — no ranking, no
+      // refill, nothing to autopick from. Regenerate rather than idling.
+      if (state.armed && state.pool.size === 0) {
+        say('player pool is empty — regenerating');
+        state.armed = false;
+      }
+
       if (!state.armed) {
         if (!playerTable()) return;          // room not up yet
         await readPool();
+        if (!state.pool.size) { say('pool came back empty — not arming, will retry'); return; }
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;
         state.armed = true;
@@ -988,15 +1006,10 @@
 
       foldPicks();                           // cheap header read, every tick
 
-      if (myTurn()) {
-        // Your clock, your pick. The only exception is the last-second safety net.
-        const left = secondsLeft();
-        if (CFG.AUTOPICK_AT_SECONDS > 0 && left !== null && left <= CFG.AUTOPICK_AT_SECONDS) {
-          await draftQueueTop();
-        }
-        renderOverlay();          // read-only; never touches the queue
-        return;
-      }
+      // Your clock, your pick — the tick does nothing during your turn. The
+      // last-second safety net runs on its own timer, because this one can be
+      // busy inside a refill for ten seconds or more.
+      if (myTurn()) return;
 
       const rc = roster().length;
       const weDrafted = rc > state.lastRoster;
@@ -1125,8 +1138,28 @@
   const timer = setInterval(tick, CFG.TICK_MS);
   // Own timer: the overlay is read-only and must never be starved by a slow tick —
   // refills, filter switches and searches all await.
+  /**
+   * The last-second pick runs on its OWN fast timer, never inside the main tick.
+   * A refill involves searches, filter switches and clearFilters and can occupy
+   * the tick for ten seconds or more; when a turn began during one, the tick was
+   * busy and the clock ran to zero unchecked. This loop only watches, so it
+   * cannot be starved.
+   */
+  let autopickTried = false;
+  const autopickTimer = setInterval(() => {
+    try {
+      if (!CFG.AUTOPICK_AT_SECONDS || complete()) return;
+      if (!myTurn()) { autopickTried = false; return; }   // reset for the next turn
+      if (autopickTried) return;
+      const left = secondsLeft();
+      if (left === null || left > CFG.AUTOPICK_AT_SECONDS) return;
+      autopickTried = true;
+      draftQueueTop();
+    } catch (e) { say(`autopick watcher: ${e.message}`); }
+  }, 400);
+
   const overlayTimer = setInterval(() => { try { renderOverlay(); } catch (e) {} }, 1000);
-  window.__queueStop = () => { clearInterval(timer); clearInterval(overlayTimer);
+  window.__queueStop = () => { clearInterval(timer); clearInterval(overlayTimer); clearInterval(autopickTimer);
     dialogObserver.disconnect(); if (overlayEl) overlayEl.remove(); say('stopped'); };
   window.__queueState = state;
   say(`armed — ${CFG.DRY_RUN ? 'DRY RUN' : 'LIVE'}, target ${CFG.QUEUE_SIZE}, slot ${CFG.SLOT}`);

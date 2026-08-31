@@ -193,6 +193,19 @@ board rather than the dregs of the original pull.
 The player table caps at 100 rows per view and does not lazy-load past it, which
 is why the pool is pulled per position rather than as one deep Flex query.
 
+## What the assistant assumes, and what it re-reads
+
+You can reorder the queue, delete from it, add to it, or switch tabs at any moment,
+and a reload wipes anything the script remembered. So it keeps **no durable model
+of the queue**: it re-reads Yahoo's queue panel every cycle and every decision —
+refill, prune, the overlay, the last-second pick — is made against what is actually
+on screen.
+
+The one thing it does assume is that **Yahoo does not change player data during a
+draft**. Names, positions, teams, byes, projections and ADP are static, so the pool
+is read once and reused. The only thing tracked over time is which players have
+been drafted since the last pass.
+
 ## Rebuilding after your own pick
 
 When you draft, the roster changes and every queued player was chosen against

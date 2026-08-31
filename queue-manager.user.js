@@ -331,7 +331,7 @@
    * worse than picking the top of the board.
    */
   async function draftQueueTop() {
-    let pl = state.queued.length ? state.pool.get(state.queued[0]) : null;
+    let pl = state.queue.length ? state.queue[0] : null;
     let via = 'queue top';
     if (!pl) {
       pl = planQueue(1)[0];
@@ -476,7 +476,7 @@
   const state = {
     pool: new Map(),        // id -> player, read once
     taken: new Set(),       // normalized "NAME|POS" of everyone drafted
-    queued: [],             // ids we put in the queue, our own model
+    queue: [],              // live read of Yahoo's queue; never a durable model
     seenPicks: new Set(),   // pick numbers already folded into `taken`
     armed: false,
     lastRoster: 0,
@@ -494,10 +494,7 @@
       state.seenPicks.add(lp.pick);
       state.taken.add(key(lp.name, lp.pos));
       n++;
-      state.queued = state.queued.filter((id) => {
-        const pl = state.pool.get(id);
-        return !pl || key(pl.name, pl.pos) !== key(lp.name, lp.pos);
-      });
+      state.queue = state.queue.filter((q) => key(q.name, q.pos) !== key(lp.name, lp.pos));
     }
     for (const p of scanPicks()) {
       if (state.seenPicks.has(p.pick)) continue;
@@ -507,10 +504,7 @@
       if (m) {
         state.taken.add(key(m[1], m[2]));
         // Anyone drafted is out of our queue, whoever took them.
-        state.queued = state.queued.filter((id) => {
-          const pl = state.pool.get(id);
-          return !pl || key(pl.name, pl.pos) !== key(m[1], m[2]);
-        });
+        state.queue = state.queue.filter((q) => key(q.name, q.pos) !== key(m[1], m[2]));
       }
     }
     return n;
@@ -565,7 +559,8 @@
     const avail = [...state.pool.values()]
       .filter((p) => !state.taken.has(key(p.name, p.pos)))
       .filter((p) => !mine.has(key(p.name, p.pos)))
-      .filter((p) => !state.queued.includes(p.id) && !planned.has(p.id));
+      .filter((p) => !state.queue.some((q) => key(q.name, q.pos) === key(p.name, p.pos))
+                  && !planned.has(p.id));
 
     // A required position we can no longer defer overrides everything.
     const missing = Object.entries(CFG.STARTERS)
@@ -669,9 +664,9 @@
    * the queue is a strict sequence, hard-capped at one kicker and one defense.
    */
   /**
-   * Yahoo's REAL queue contents, readable only while the Queue tab is active.
-   * Returns null when unreadable, so callers fall back to our model instead of
-   * silently showing something that disagrees with what is on screen.
+   * Yahoo's REAL queue, read straight off the panel. Readable only while the
+   * Queue tab is active, so returns null when it is not; callers decide whether
+   * to switch tabs for it.
    */
   function liveQueue() {
     if (!/^Queue/i.test(activeTab())) return null;
@@ -680,15 +675,44 @@
       .map(parsePlayer).filter(Boolean);
   }
 
+  /**
+   * Refresh state.queue from the page, switching to the Queue tab if needed and
+   * restoring whatever the human was looking at.
+   *
+   * We deliberately keep NO durable model of the queue. The human can reorder it,
+   * delete from it, or add to it at any moment, and a reload wipes anything we
+   * remembered — so every decision is made against what is actually on screen.
+   * Player attributes are the one thing Yahoo does not change mid-draft, which is
+   * why the pool is read once and only availability is tracked over time.
+   */
+  async function syncQueue() {
+    const tabs = panelTabs();
+    const was = activeTab();
+    const mustSwitch = !/^Queue/i.test(was);
+    if (mustSwitch && tabs.queue) { tabs.queue.click(); await sleep(450); }
+
+    const live = liveQueue() || [];
+    // Resolve each entry against the pool so we recover id, projection and value.
+    state.queue = live.map((p) => {
+      const hit = [...state.pool.values()]
+        .find((x) => x.name === p.name && x.pos === p.pos);
+      return Object.assign({}, p, hit || {});
+    });
+
+    if (mustSwitch && tabs.picks && /^Picks$/i.test(was)) { tabs.picks.click(); await sleep(250); }
+    else if (mustSwitch && tabs.queue && was && !/^Queue/i.test(was)) { /* leave on Queue */ }
+    return state.queue;
+  }
+
   /** The queue's current contents, valued as if they were not queued. */
   function queueView() {
-    const saved = state.queued;
-    state.queued = [];
+    const saved = state.queue;
+    state.queue = [];
     let ranked;
-    try { ranked = rankAvailable([]); } finally { state.queued = saved; }
-    const byId = new Map(ranked.map((p) => [p.id, p]));
-    return saved.map((id) => byId.get(id)
-      || Object.assign({}, state.pool.get(id) || { name: '?', pos: '?', team: '' }, { val: null }));
+    try { ranked = rankAvailable([]); } finally { state.queue = saved; }
+    const byKey = new Map(ranked.map((p) => [key(p.name, p.pos), p]));
+    return saved.map((q) => byKey.get(key(q.name, q.pos))
+      || Object.assign({}, q, { val: null }));
   }
 
   function planQueue(n) {
@@ -821,10 +845,7 @@
       await sleep(700);
       if (queueCount() >= before) break;
       removed.push(`${info.name} (${info.pos})`);
-      state.queued = state.queued.filter((id) => {
-        const q = state.pool.get(id);
-        return !q || !(q.name === info.name && q.pos === info.pos);
-      });
+      state.queue = state.queue.filter((q) => !(q.name === info.name && q.pos === info.pos));
     }
     if (mustSwitch && /^Picks$/i.test(was) && tabs.picks) { tabs.picks.click(); await sleep(250); }
     if (removed.length) say(`removed from queue: ${removed.join(', ')}`);
@@ -949,7 +970,7 @@
     for (const p of plan) {
       if (myTurn()) { say('your turn started — stopping refill'); return; }
       if (await toggleQueue(p, true)) {
-        state.queued.push(p.id);
+        state.queue.push(p);
         say(`queued ${p.name} ${p.pos}-${p.team} val ${p.val} (${p.role}, po ${p.playoffMod}, bye ${p.byeMod})`);
       }
     }
@@ -1036,7 +1057,7 @@
       poolByPos: [...state.pool.values()].reduce((a, p) => (a[p.pos] = (a[p.pos] || 0) + 1, a), {}),
       takenCount: state.taken.size,
       picksSeen: [...state.seenPicks].sort((a, b) => a - b),
-      queuedIds: state.queued,
+      queue: state.queue.map((q) => `${q.name} ${q.pos}`),
       top25: ranked.slice(0, 25).map((p) => ({
         name: p.name, pos: p.pos, team: p.team, bye: p.bye, proj: p.proj, adp: p.adp,
         raw: p.raw, val: p.val, role: p.role, playoffMod: p.playoffMod, byeMod: p.byeMod,
@@ -1116,6 +1137,12 @@
       const weDrafted = rc > state.lastRoster;
       const short = queueCount() < CFG.QUEUE_SIZE;
 
+
+      // Re-read the queue from the page every cycle. The human may have
+      // reordered it, deleted from it, or added to it since the last pass, and a
+      // reload wipes anything we remembered — so nothing is carried forward.
+      await syncQueue();
+
       // Only disturb the tabs when we are actually about to rebuild the queue.
       if (weDrafted || short) await syncPicksFromPanel();
 
@@ -1185,10 +1212,11 @@
 
     const esc = (t) => String(t ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
     const badge = queueCount();
-    // Prefer Yahoo's own queue panel when it is on screen — our model drifts.
+    // state.queue is itself a live read, refreshed every tick; prefer an even
+    // fresher one when the Queue tab happens to be open right now.
     const live = liveQueue();
     const model = queueView();
-    const source = live ? 'live' : 'model';
+    const source = live ? 'live' : 'synced';
     const q = live
       ? live.map((p) => Object.assign({}, p,
           model.find((m) => m.name === p.name && m.pos === p.pos) || {}))
@@ -1227,7 +1255,7 @@
     el.innerHTML = busy +
       `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2b333c;padding-bottom:5px">` +
       `<b>QUEUE</b><span style="color:#7c8894">${q.length}/${CFG.QUEUE_SIZE}` +
-      `${source === 'model' ? ' <span style="color:#e0a340">(open Queue tab to sync)</span>' : ''}` +
+      `${source === 'synced' ? ' <span style="color:#7c8894">(synced)</span>' : ''}` +
       `${badge !== q.length ? ` <span style="color:#e27a72">badge ${badge}</span>` : ''}</span></div>` +
       `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
       `<span style="flex:1">PLAYER</span><span style="width:46px;text-align:right">GAIN</span></div>` +

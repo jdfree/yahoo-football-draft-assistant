@@ -1,0 +1,6 @@
+.DS_Store
+node_modules/
+*.log
+# never commit Yahoo credentials or tokens
+.env
+*token*.json

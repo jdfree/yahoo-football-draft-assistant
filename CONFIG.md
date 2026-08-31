@@ -15,11 +15,22 @@ node fetch-team-context.js --playoffs 15,16,17 --swing 0.10
 # 3. Set CFG.SLOT and CFG.TEAMS, leave DRY_RUN true, run a mock, read the log.
 ```
 
-`window.__queueDump()` in the draft room returns the entire state the valuation
-was built from — config, pool, roster, picks seen, and the top 25 with every
-component of their score broken out. It is also mirrored to
-`localStorage.ys_dump` on each tick, so a run can be audited afterwards rather
-than taken on trust.
+## Inspecting the preprocessing
+
+Two artifacts, both written by scripts rather than printed:
+
+| What | Where |
+| --- | --- |
+| Team strength, schedule, playoff difficulty | `team-context.json` (and `.gen.js` for the browser), written by `fetch-team-context.js` |
+| Player pool, roster, rankings with every score component | run `window.__saveDump()` in the draft room |
+
+`__saveDump()` downloads the full state as JSON — config, the whole pool, roster,
+picks seen, and the top 25 with raw value, role weight, playoff modifier and bye
+modifier broken out separately. `__saveDump('pool.csv')` writes just the pool as
+CSV. The state is also mirrored to `localStorage.ys_dump` each tick.
+
+The pool exists only inside the page, so exporting it to a file is the only way to
+audit it properly.
 
 ---
 

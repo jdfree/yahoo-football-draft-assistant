@@ -625,6 +625,33 @@
   const dialogObserver = new MutationObserver(() => ensureLiveDrafting());
   dialogObserver.observe(document.body, { childList: true, subtree: true });
 
+  /**
+   * Write the whole preprocessed state to a file. The pool lives only in the page,
+   * so without this the only way to inspect it is to print it — which is both
+   * slow and lossy. Downloads land in your browser's download directory.
+   *
+   *   window.__saveDump()            -> ys-dump-<round>.json
+   *   window.__saveDump('pool.csv')  -> CSV of the pool only
+   */
+  window.__saveDump = (filename) => {
+    const d = window.__queueDump();
+    const csv = /\.csv$/i.test(filename || '');
+    const body = csv
+      ? ['name,pos,team,proj,adp,bye']
+          .concat(d.pool.map((p) => [p.name, p.pos, p.team, p.proj, p.adp, p.bye]
+            .map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))).join('\n')
+      : JSON.stringify(d, null, 2);
+    const name = filename || `ys-dump-r${d.round || 0}.json`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([body], { type: csv ? 'text/csv' : 'application/json' }));
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    say(`saved ${name} (${d.poolSize} players, ${body.length} bytes)`);
+    return name;
+  };
+
   const timer = setInterval(tick, CFG.TICK_MS);
   window.__queueStop = () => { clearInterval(timer); dialogObserver.disconnect(); say('stopped'); };
   window.__queueState = state;

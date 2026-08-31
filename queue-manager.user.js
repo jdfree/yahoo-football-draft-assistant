@@ -713,14 +713,20 @@
 
       const pm = playoffModifier(p.team);
       const bm = byeMultiplier(p, have);
-      const val = raw * weight * pm * bm;
+      // The displayed value deliberately EXCLUDES the playoff modifier: schedule
+      // is a separate consideration and folding it in makes the headline number
+      // impossible to reason about. It is surfaced beside the value instead.
+      const val = raw * weight * bm;
+      const playoffDelta = val * (pm - 1);
 
       // Ranking weight is separate from the displayed value so the overlay stays
       // honest: only the sort order is affected, never the number shown.
       const depth = (role === 'reserve' && (p.pos === 'RB' || p.pos === 'WR'))
         ? CFG.BACKUP_RB_WR_WEIGHT : 1;
+      // Queue preference still uses the COMBINED figure — schedule included.
       return { ...p, raw: +raw.toFixed(2), val: +val.toFixed(2),
-               sortVal: +(val * depth).toFixed(2), depthMult: depth, role,
+               playoffDelta: +playoffDelta.toFixed(2),
+               sortVal: +(val * pm * depth).toFixed(2), depthMult: depth, role,
                playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3), teamMod: +teamMod.toFixed(3),
                why: `${p.proj} - repl ${(p.proj - raw).toFixed(1)} = ${raw.toFixed(1)}` +
                     ` x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` };
@@ -1350,8 +1356,7 @@
         else if (p.role === 'flex') bits.push('fills flex');
         else if (p.role === 'reserve') bits.push('bench only');
         else if (p.role === 'must-fill') bits.push(`must fill ${p.pos}`);
-        if (p.playoffMod && Math.abs(p.playoffMod - 1) > 0.005)
-          bits.push(`playoff sched ${p.playoffMod > 1 ? '+' : ''}${((p.playoffMod - 1) * 100).toFixed(1)}%`);
+
         if (p.byeMod && p.byeMod < 1) bits.push(`bye clash −${((1 - p.byeMod) * 100).toFixed(0)}%`);
         if (p.teamMod && p.teamMod < 1) bits.push(`teammate −${((1 - p.teamMod) * 100).toFixed(0)}%`);
         // Ranked-up for depth, but the GAIN shown stays the honest figure.
@@ -1362,8 +1367,13 @@
         `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">` +
         `${esc(p.name)} <span style="color:#7c8894">${esc(p.pos)}${p.team ? '-' + esc(p.team) : ''}</span>` +
         `${yours ? ' <span style="color:#e0a340" title="you added this; never removed">◆</span>' : ''}</span>` +
-        `<span style="color:${p.val > 0 ? '#5cb585' : '#7c8894'};text-align:right;width:46px">` +
-        `${p.val === null ? '—' : p.val === Infinity ? 'MUST' : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span></div>` +
+        `<span style="color:${p.val > 0 ? '#5cb585' : '#7c8894'};text-align:right;width:44px">` +
+        `${p.val === null ? '—' : p.val === Infinity ? 'MUST' : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span>` +
+        // Playoff schedule shown separately, never folded into the value above.
+        `<span style="text-align:right;width:38px;color:${!p.playoffDelta ? '#7c8894'
+          : p.playoffDelta > 0 ? '#5cb585' : '#e27a72'}">` +
+        `${!p.playoffDelta || p.val === null || p.val === Infinity ? ''
+          : (p.playoffDelta > 0 ? '+' : '−') + Math.abs(p.playoffDelta).toFixed(1)}</span></div>` +
         `<div style="color:#7c8894;margin-left:17px;opacity:${dim ? 0.6 : 1}">${bits.join(' · ')}</div>`;
     };
 
@@ -1378,13 +1388,17 @@
       `${source === 'synced' ? ' <span style="color:#7c8894">(synced)</span>' : ''}` +
       `${badge !== q.length ? ` <span style="color:#e27a72">badge ${badge}</span>` : ''}</span></div>` +
       `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
-      `<span style="flex:1">PLAYER</span><span style="width:46px;text-align:right">GAIN</span></div>` +
+      `<span style="flex:1">PLAYER</span><span style="width:44px;text-align:right">GAIN</span>` +
+      `<span style="width:38px;text-align:right">SCHED</span></div>` +
       (q.length ? q.map((p, i) => row(p, i + 1, false, !isOurs(p))).join('')
                 : '<div style="color:#7c8894;margin-top:4px">empty</div>') +
       (next.length ? `<div style="color:#7c8894;border-top:1px dashed #2b333c;margin-top:7px;padding-top:4px">NEXT UP</div>` +
         next.map((p) => row(p, '·', true, false)).join('') : '') +
       `<div style="color:#7c8894;border-top:1px solid #2b333c;margin-top:7px;padding-top:5px">` +
       `<b style="color:#e0a340">◆</b> = you queued this; never removed automatically.<br>` +
+      `<b style="color:#5cb585">SCHED</b> = points the fantasy-playoff schedule adds or ` +
+      `removes. Kept out of GAIN so the headline stays comparable, but it does count ` +
+      `toward queue order.<br>` +
       `<b style="color:#a7b2bd">GAIN</b> = season points you gain by taking this player ` +
       `now instead of the best one at his position still likely to be there at your ` +
       `next pick. Adjusted down if he can only sit on your bench, and for playoff ` +

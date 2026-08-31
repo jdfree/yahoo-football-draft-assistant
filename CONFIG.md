@@ -114,6 +114,11 @@ their offense forces a shootout. That is the metric behaving as designed, not a 
 A bye during a playoff week is scored as the worst difficulty observed anywhere in
 the league — the player is simply unavailable.
 
+**It is shown separately, not folded into the value.** The overlay renders a green
+or red `SCHED` figure beside `GAIN` — the points the playoff schedule adds or
+removes. `GAIN` itself stays schedule-free so two players are directly comparable,
+while queue ordering uses the combined figure.
+
 **Swing.** `PLAYOFF_SWING` is the *total* spread between the easiest and hardest
 schedule in the league. At the default `0.10`, two otherwise identical players
 differ by 10% — the easiest slate gets ×1.05, the hardest ×0.95, everyone else

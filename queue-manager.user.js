@@ -102,8 +102,15 @@
   // Reading the room
   // ---------------------------------------------------------------------------
 
+  /**
+   * Identify the player table by `.ys-player[data-id]`, which is always present.
+   * Do NOT use `.ys-addqueue`: during YOUR turn Yahoo swaps that queue-star cell
+   * for a "Draft" button, so the table becomes invisible to us exactly when a
+   * reload or pool read happens mid-turn — which left the pool empty and the whole
+   * assistant inert.
+   */
   const playerTable = () => [...document.querySelectorAll('table')]
-    .find((t) => t.querySelector('.ys-addqueue'));
+    .find((t) => t.querySelector('.ys-player[data-id]'));
 
   /**
    * Column indexes must be resolved on EVERY read, never cached: the Quarterbacks

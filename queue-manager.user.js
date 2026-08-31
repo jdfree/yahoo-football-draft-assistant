@@ -83,6 +83,15 @@
     // live draft queued a defense in round two.
     LATE_ONLY: ['K', 'DEF'],
 
+    // --- same-team bias -----------------------------------------------------
+    // Percentage reduction applied to a player's projection when you already hold
+    // someone from his NFL team. 0 disables it. 0.10 means a player from a team
+    // you already own projects 10% lower for ranking purposes.
+    //
+    // Deliberately NOT applied to kickers or defenses: a defense's output is not
+    // diminished by owning that team's running back.
+    SAME_TEAM_PENALTY: 0,
+
     // --- 4. bye weeks -------------------------------------------------------
     // 0 ignores byes entirely. 1 means a player whose bye would leave a starting
     // slot empty is worth nothing. Scales with how badly the bye collides.
@@ -560,6 +569,21 @@
    * share this bye week. Once that reaches the number of starting slots at the
    * position, adding another means a week with nobody to start there.
    */
+  /**
+   * Reduction for already holding a teammate. Applied to the PROJECTION rather
+   * than the final value, so it flows through the value-over-replacement maths
+   * exactly as a genuinely lower-projected player would.
+   *
+   * Kickers and defenses are exempt by design.
+   */
+  function sameTeamMultiplier(player, have) {
+    if (!CFG.SAME_TEAM_PENALTY || !player.team) return 1;
+    if (player.pos === 'K' || player.pos === 'DEF') return 1;
+    const teammates = have.filter((h) => h.team && h.team === player.team
+      && h.pos !== 'K' && h.pos !== 'DEF').length;
+    return teammates ? 1 - CFG.SAME_TEAM_PENALTY : 1;
+  }
+
   function byeMultiplier(player, have) {
     if (!CFG.BYE_FACTOR || !player.bye) return 1;
     const clash = have.filter((h) => h.pos === player.pos && h.bye === player.bye).length;
@@ -636,7 +660,9 @@
     };
 
     return avail.filter(legal).map((p) => {
-      const raw = p.proj - replacement(p.pos);
+      const teamMod = sameTeamMultiplier(p, have);
+      const effProj = p.proj * teamMod;          // the penalty lands on the projection
+      const raw = effProj - replacement(p.pos);
 
       let weight = CFG.WEIGHT_STARTER, role = 'starter';
       if (count(p.pos) >= CFG.STARTERS[p.pos]) {
@@ -652,7 +678,7 @@
       const val = raw * weight * pm * bm;
 
       return { ...p, raw: +raw.toFixed(2), val: +val.toFixed(2), role,
-               playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3),
+               playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3), teamMod: +teamMod.toFixed(3),
                why: `${p.proj} - repl ${(p.proj - raw).toFixed(1)} = ${raw.toFixed(1)}` +
                     ` x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` };
     }).sort((a, b) => b.val - a.val);
@@ -1261,6 +1287,7 @@
         if (p.playoffMod && Math.abs(p.playoffMod - 1) > 0.005)
           bits.push(`playoff sched ${p.playoffMod > 1 ? '+' : ''}${((p.playoffMod - 1) * 100).toFixed(1)}%`);
         if (p.byeMod && p.byeMod < 1) bits.push(`bye clash −${((1 - p.byeMod) * 100).toFixed(0)}%`);
+        if (p.teamMod && p.teamMod < 1) bits.push(`teammate −${((1 - p.teamMod) * 100).toFixed(0)}%`);
       }
       return `<div style="display:flex;gap:6px;margin-top:4px;opacity:${dim ? 0.6 : 1}">` +
         `<span style="color:#7c8894;width:11px">${label}</span>` +

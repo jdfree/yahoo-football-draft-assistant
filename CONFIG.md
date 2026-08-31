@@ -141,6 +141,28 @@ At `0`, byes are ignored. At `1`, a player who would leave a starting slot with
 nobody active that week is worth nothing. At the default `0.5`, the first
 collision at a one-slot position halves his value.
 
+## Same-team bias
+
+| Parameter | Default |
+| --- | --- |
+| `SAME_TEAM_PENALTY` | `0` |
+
+A percentage reduction applied to a player's **projection** when you already hold
+someone from his NFL team. `0` disables it entirely; `0.10` means a player from a
+team you already own projects 10% lower for ranking purposes.
+
+It is applied to the projection rather than the final value, so it flows through
+the value-over-replacement maths exactly as a genuinely lower-projected player
+would — it can move a player below replacement, not merely down the order.
+
+The reduction is flat: holding one teammate and holding three produce the same
+penalty. If you would rather it compound per teammate, that is a one-line change
+in `sameTeamMultiplier`.
+
+**It does not apply to kickers or defenses.** A defense's output is not diminished
+by owning that team's running back, and the stacking concerns the penalty exists to
+express do not apply to those positions.
+
 ## 5. Last-second pick
 
 | Parameter | Default |

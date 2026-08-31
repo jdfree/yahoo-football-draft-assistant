@@ -83,6 +83,16 @@
     // live draft queued a defense in round two.
     LATE_ONLY: ['K', 'DEF'],
 
+    // --- backup depth at RB/WR ----------------------------------------------
+    // Injuries and bye-week holes are needed far more often at running back and
+    // receiver than at quarterback or tight end, where one starter usually
+    // suffices. This multiplies the RANKING weight of a bench-tier RB or WR so
+    // depth there wins ties against a bench QB or TE of similar raw value.
+    //
+    // It deliberately does NOT change the displayed GAIN — the overlay keeps
+    // showing the honest points-over-replacement figure. Only the ordering moves.
+    BACKUP_RB_WR_WEIGHT: 3,
+
     // --- same-team bias -----------------------------------------------------
     // Percentage reduction applied to a player's projection when you already hold
     // someone from his NFL team. 0 disables it. 0.10 means a player from a team
@@ -705,11 +715,16 @@
       const bm = byeMultiplier(p, have);
       const val = raw * weight * pm * bm;
 
-      return { ...p, raw: +raw.toFixed(2), val: +val.toFixed(2), role,
+      // Ranking weight is separate from the displayed value so the overlay stays
+      // honest: only the sort order is affected, never the number shown.
+      const depth = (role === 'reserve' && (p.pos === 'RB' || p.pos === 'WR'))
+        ? CFG.BACKUP_RB_WR_WEIGHT : 1;
+      return { ...p, raw: +raw.toFixed(2), val: +val.toFixed(2),
+               sortVal: +(val * depth).toFixed(2), depthMult: depth, role,
                playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3), teamMod: +teamMod.toFixed(3),
                why: `${p.proj} - repl ${(p.proj - raw).toFixed(1)} = ${raw.toFixed(1)}` +
                     ` x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` };
-    }).sort((a, b) => b.val - a.val);
+    }).sort((a, b) => b.sortVal - a.sortVal);   // rank on the weighted value
   }
 
   /**
@@ -1339,6 +1354,8 @@
           bits.push(`playoff sched ${p.playoffMod > 1 ? '+' : ''}${((p.playoffMod - 1) * 100).toFixed(1)}%`);
         if (p.byeMod && p.byeMod < 1) bits.push(`bye clash −${((1 - p.byeMod) * 100).toFixed(0)}%`);
         if (p.teamMod && p.teamMod < 1) bits.push(`teammate −${((1 - p.teamMod) * 100).toFixed(0)}%`);
+        // Ranked-up for depth, but the GAIN shown stays the honest figure.
+        if (p.depthMult && p.depthMult > 1) bits.push(`depth ×${p.depthMult} (rank only)`);
       }
       return `<div style="display:flex;gap:6px;margin-top:4px;opacity:${dim ? 0.6 : 1}">` +
         `<span style="color:#7c8894;width:11px">${label}</span>` +

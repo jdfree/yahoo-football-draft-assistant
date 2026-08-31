@@ -141,6 +141,25 @@ At `0`, byes are ignored. At `1`, a player who would leave a starting slot with
 nobody active that week is worth nothing. At the default `0.5`, the first
 collision at a one-slot position halves his value.
 
+## Backup depth at RB and WR
+
+| Parameter | Default |
+| --- | --- |
+| `BACKUP_RB_WR_WEIGHT` | `3` |
+
+Injuries and bye-week holes are needed far more often at running back and receiver
+than at quarterback or tight end, where a single starter usually suffices. This
+multiplies the **ranking weight** of a bench-tier RB or WR, so depth there beats a
+bench QB or TE of similar raw value.
+
+It applies only to players in the `reserve` role — someone filling a starting slot
+or flex is unaffected.
+
+**It does not change the displayed number.** The overlay keeps showing the honest
+points-over-replacement figure; only the sort order moves. A player promoted this
+way is flagged `depth ×3 (rank only)` so the reason for their position is visible
+without the value being misrepresented.
+
 ## Same-team bias
 
 | Parameter | Default |

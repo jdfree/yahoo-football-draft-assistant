@@ -32,8 +32,8 @@ than taken on trust.
 | `STARTERS` | `{QB:1,RB:2,WR:2,TE:1,K:1,DEF:1}` | Starting slots, excluding flex. |
 | `FLEX` | `1` | W/R/T slots. |
 | `CAPS` | `{QB:2,RB:6,WR:7,TE:3,K:1,DEF:1}` | Hard ceiling per position. |
-| `POOL` | 75 QB, 75 TE, 300 W/R/T, all K, all DEF | Read once at draft start. |
-| `TICK_MS` | `2000` | How often to check the queue. |
+| `POOL` | top 100 per position | Read once at draft start, replenished per position below 50 available. |
+| `TICK_MS` | `2000` | How often to check the queue. Dialog dismissal is not on this timer. |
 
 ## 1. Queue size
 

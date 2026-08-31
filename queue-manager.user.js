@@ -35,7 +35,9 @@
     STARTERS: { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, DEF: 1 },
     FLEX: 1,              // W/R/T slots
     CAPS: { QB: 2, RB: 6, WR: 7, TE: 3, K: 1, DEF: 1 },
-    POOL: [['QB', 75], ['TE', 75], ['W/R/T', 300], ['K', 999], ['DEF', 999]],
+    // Top 100 per position. The table caps at 100 rows per view and does NOT
+    // lazy-load past it, so a single deep 'Flex' pull is not possible.
+    POOL: ['Quarterbacks', 'Running Backs', 'Wide Receivers', 'Tight Ends', 'Kickers', 'Team Defenses'],
 
     // --- 1. queue size -----------------------------------------------------
     QUEUE_SIZE: 5,
@@ -58,6 +60,16 @@
     PLAYOFF_WEEKS: [15, 16, 17],
     PLAYOFF_SWING: 0.10,
 
+    // --- 5. last-second pick ------------------------------------------------
+    // Seconds left on YOUR clock at which the manager drafts the top of the queue
+    // itself. 0 = never; let the clock expire and Yahoo take the queue top.
+    //
+    // Setting this above 0 is not just convenience: Yahoo switches your team into
+    // autopick mode whenever a timer actually expires, and every later pick is
+    // then made for you. Picking at 2 seconds means the timer never expires, so
+    // that never triggers.
+    AUTOPICK_AT_SECONDS: 0,
+
     // --- 4. bye weeks -------------------------------------------------------
     // 0 ignores byes entirely. 1 means a player whose bye would leave a starting
     // slot empty is worth nothing. Scales with how badly the bye collides.
@@ -75,46 +87,61 @@
   const playerTable = () => [...document.querySelectorAll('table')]
     .find((t) => t.querySelector('.ys-addqueue'));
 
-  /** Column indexes by header text — never by position, the layout shifts. */
-  let COL = null;
-  function columns(tbl) {
-    if (COL) return COL;
+  /**
+   * Column indexes must be resolved on EVERY read, never cached: the Quarterbacks
+   * view shows Pass Yds where the Flex view shows Rec, so a stale index silently
+   * reads a completely different number.
+   */
+  function columns() {
+    const tbl = playerTable();
+    if (!tbl) return null;
     const hs = [...tbl.querySelectorAll('thead th')].map((h) => h.innerText.replace(/\s+/g, ' ').trim());
     const ix = (re) => hs.findIndex((h) => re.test(h));
-    COL = { player: ix(/^Player$/i), adp: ix(/^ADP$/i), proj: ix(/Proj\s*Pts/i), bye: ix(/^Bye$/i) };
-    if (COL.player < 0 || COL.proj < 0) { say('FATAL: Player/Proj Pts columns not found'); COL = null; }
-    return COL;
+    const c = { proj: ix(/Proj\s*Pts/i), adp: ix(/^ADP$/i), bye: ix(/^Bye$/i) };
+    return c.proj < 0 ? null : c;
   }
 
   /**
-   * Each row carries `.ys-addqueue[data-id]` — Yahoo's own player id. This is the
-   * only stable key in the room. Names are abbreviated to a first initial and
-   * collide badly (B. Robinson is two different running backs), so never key on them.
+   * Parse a `.ys-player` element structurally. Its innerText is one field per line:
+   *
+   *   C. Hubbard      name
+   *   Q               injury tag (optional)
+   *   RB              position
+   *   Car             NFL team
+   *   Bye 5
+   *
+   * Position is matched as a WHOLE LINE. Substring matching on the concatenated
+   * text is what made "K. Murray QB Min" parse as a kicker — the initial "K" hit
+   * before the real position did, which wrecked his replacement level and put him
+   * top of the queue. A standalone line is never an initial.
    */
+  function parsePlayer(el) {
+    const L = el.innerText.split('\n').map((s) => s.trim()).filter(Boolean);
+    const pi = L.findIndex((l) => /^(QB|RB|WR|TE|K|DEF)$/.test(l));
+    if (pi < 0) return null;
+    const next = L[pi + 1] || '';
+    return {
+      id: el.getAttribute('data-id'),
+      name: L[0],
+      pos: L[pi],
+      team: /^Bye/i.test(next) ? '' : next.toUpperCase(),   // defenses carry no team
+      bye: parseInt((L.find((l) => /^Bye/i.test(l)) || '').replace(/\D+/g, ''), 10) || null,
+    };
+  }
+
   function readRows() {
     const tbl = playerTable();
-    if (!tbl) return [];
-    const c = columns(tbl);
-    if (!c) return [];
+    const c = columns();
+    if (!tbl || !c) return [];
     return [...tbl.querySelectorAll('tbody tr')].map((r) => {
-      const q = r.querySelector('.ys-addqueue');
-      if (!q) return null;
-      const cells = r.children;
-      const who = cells[c.player]?.innerText.replace(/\s+/g, ' ').trim() || '';
-      const m = who.match(/\b(QB|RB|WR|TE|K|DEF)\b/);
-      const proj = parseFloat(cells[c.proj]?.innerText);
-      const adp = parseFloat(cells[c.adp]?.innerText);
-      if (!m || !Number.isFinite(proj)) return null;
-      return {
-        id: q.getAttribute('data-id'),
-        name: who.split('\n')[0].trim(),
-        pos: m[1],
-        team: (who.match(/\b(QB|RB|WR|TE|K|DEF)\b\s*[·|]?\s*([A-Za-z]{2,3})/) || [])[2] || '',
-        proj,
-        adp: Number.isFinite(adp) ? adp : 999,
-        bye: parseInt(cells[c.bye]?.innerText, 10) || null,
-        row: r,
-      };
+      const el = r.querySelector('.ys-player[data-id]');
+      if (!el) return null;
+      const base = parsePlayer(el);
+      if (!base) return null;
+      const proj = parseFloat(r.children[c.proj]?.innerText);
+      const adp = parseFloat(r.children[c.adp]?.innerText);
+      if (!Number.isFinite(proj)) return null;
+      return { ...base, proj, adp: Number.isFinite(adp) ? adp : 999, row: r };
     }).filter(Boolean);
   }
 
@@ -158,6 +185,19 @@
    * feed alone cannot reconstruct the start of the draft. The one-time pool read
    * covers that: whatever is in the table at arm time is what is still available.
    */
+  /**
+   * The picks feed only exists in the DOM while the Picks tab is the active one.
+   * If the user is looking at their Queue instead, this returns nothing — which
+   * silently disabled availability tracking for an entire test draft. The header's
+   * "Last: NAME (POS · TEAM)" line is always present, so it backs the feed up.
+   */
+  function scanLastPick() {
+    const m = document.body.innerText.replace(/\s+/g, ' ')
+      .match(/Last:\s*([A-Za-z.'’\- ]+?)\s*\((QB|RB|WR|TE|K|DEF)\b/i);
+    const rd = document.body.innerText.match(/Round\s*(\d+),\s*Pick\s*(\d+)/i);
+    return m && rd ? [{ pick: +rd[2] - 1, name: m[1].trim(), pos: m[2].toUpperCase() }] : [];
+  }
+
   function scanPicks() {
     const found = [];
     for (const el of document.querySelectorAll('.ys-player')) {
@@ -172,6 +212,35 @@
     return found;
   }
 
+  /** Seconds left on the clock, from the mm:ss in the draft header. */
+  function secondsLeft() {
+    const m = document.body.innerText.match(/\b(\d{1,2}):(\d{2})\b/);
+    return m ? (+m[1]) * 60 + (+m[2]) : null;
+  }
+
+  /**
+   * Draft the top of our queue with the clock nearly expired. Only ever called
+   * during your own turn, and only inside the final AUTOPICK_AT_SECONDS.
+   */
+  async function draftQueueTop() {
+    const id = state.queued[0];
+    const pl = id && state.pool.get(id);
+    if (!pl) { say('autopick threshold hit but queue is empty'); return false; }
+    let row = document.querySelector(`.ys-player[data-id="${pl.id}"]`)?.closest('tr');
+    if (!row) {
+      setSearch(pl.name.replace(/^[A-Z]\.\s*/, ''));
+      await sleep(800);
+      row = document.querySelector(`.ys-player[data-id="${pl.id}"]`)?.closest('tr');
+    }
+    // The Draft button only exists in rows while it is your turn.
+    const btn = row && [...row.querySelectorAll('button')]
+      .find((b) => /^draft$/i.test((b.innerText || '').trim()));
+    if (!btn) { say(`autopick: no Draft button for ${pl.name}`); return false; }
+    btn.click();
+    say(`autopick at ${secondsLeft()}s — drafted ${pl.name} (${pl.pos}) from queue top`);
+    return true;
+  }
+
   const myTurn = () => {
     const t = document.body.innerText.replace(/\s+/g, ' ');
     return /YOUR TURN,\s*DRAFT NOW/i.test(document.title) || /YOUR TURN\s*[•·]/i.test(t);
@@ -179,16 +248,34 @@
   const complete = () => /Draft Complete/i.test(document.body.innerText);
 
   /**
-   * Yahoo forces you into autopick mode after a stretch of inactivity and puts up
-   * a dialog saying so. Left alone it takes the pick out of your hands entirely,
-   * which is the opposite of the point here. Dismiss it whenever it appears.
+   * Yahoo turns autodraft ON by itself whenever a pick timer expires and a player
+   * is auto-selected, and puts up a dialog saying so. Left alone, every subsequent
+   * pick is made for you — the opposite of the point here, where you make the
+   * picks and the queue is only the fallback.
+   *
+   * So after each auto-pick: dismiss the dialog and switch autodraft back off.
+   * That also restores the interaction Yahoo counts as activity, which is why no
+   * separate idle-timer heartbeat is needed.
    */
-  function dismissInactivityDialog() {
+  function ensureLiveDrafting() {
+    let acted = false;
+
     const d = document.querySelector('[role=dialog]');
-    if (!d || !/autopick|inactivity/i.test(d.innerText || '')) return false;
-    const btn = [...d.querySelectorAll('button')].pop();
-    if (btn) { btn.click(); say('dismissed autopick-inactivity dialog'); return true; }
-    return false;
+    if (d && /autopick|autodraft|inactivity/i.test(d.innerText || '')) {
+      const btn = [...d.querySelectorAll('button')].pop();
+      if (btn) { btn.click(); say('dismissed autopick dialog'); acted = true; }
+    }
+
+    // The toggle is outline-styled when off and filled when on, with no aria state
+    // to read, so detect it by whether the button has a solid background.
+    const tog = [...document.querySelectorAll('button')]
+      .find((b) => /^Autodraft$/i.test((b.innerText || '').trim()));
+    if (tog) {
+      const bg = getComputedStyle(tog).backgroundColor;
+      const solid = bg && !/rgba?\(0, 0, 0, 0\)|transparent|rgb\(255, 255, 255\)/i.test(bg);
+      if (solid) { tog.click(); say('autodraft was on — switched off'); acted = true; }
+    }
+    return acted;
   }
 
   // ---------------------------------------------------------------------------
@@ -201,11 +288,21 @@
     queued: [],             // ids we put in the queue, our own model
     seenPicks: new Set(),   // pick numbers already folded into `taken`
     armed: false,
+    lastRoster: 0,
   };
 
   const key = (name, pos) => `${name.replace(/\s+/g, ' ').trim().toUpperCase()}|${pos}`;
 
   function foldPicks() {
+    for (const lp of scanLastPick()) {
+      if (state.seenPicks.has(lp.pick)) continue;
+      state.seenPicks.add(lp.pick);
+      state.taken.add(key(lp.name, lp.pos));
+      state.queued = state.queued.filter((id) => {
+        const pl = state.pool.get(id);
+        return !pl || key(pl.name, pl.pos) !== key(lp.name, lp.pos);
+      });
+    }
     for (const p of scanPicks()) {
       if (state.seenPicks.has(p.pick)) continue;
       state.seenPicks.add(p.pick);
@@ -254,8 +351,14 @@
     return 1 - CFG.BYE_FACTOR * Math.min(1, clash / slots);
   }
 
-  function rankAvailable() {
-    const have = roster();
+  /**
+   * `extra` holds players already planned into this refill pass. Without threading
+   * them through, every slot in a five-deep queue is scored against the SAME
+   * roster — which queued five kickers for a one-kicker roster slot.
+   */
+  function rankAvailable(extra) {
+    const have = roster().concat(extra || []);
+    const planned = new Set((extra || []).map((e) => e.id));
     const size = rosterSize();
     const rd = roundNow();
     const count = (p) => have.filter((x) => x.pos === p).length;
@@ -264,7 +367,7 @@
     const avail = [...state.pool.values()]
       .filter((p) => !state.taken.has(key(p.name, p.pos)))
       .filter((p) => !mine.has(key(p.name, p.pos)))
-      .filter((p) => !state.queued.includes(p.id));
+      .filter((p) => !state.queued.includes(p.id) && !planned.has(p.id));
 
     // A required position we can no longer defer overrides everything.
     const missing = Object.entries(CFG.STARTERS)
@@ -332,6 +435,17 @@
     }).sort((a, b) => b.val - a.val);
   }
 
+  /** Build a coherent n-deep queue, re-ranking after each provisional pick. */
+  function planQueue(n) {
+    const chosen = [];
+    for (let i = 0; i < n; i++) {
+      const ranked = rankAvailable(chosen);
+      if (!ranked.length) break;
+      chosen.push(ranked[0]);
+    }
+    return chosen;
+  }
+
   // ---------------------------------------------------------------------------
   // Acting on the queue
   // ---------------------------------------------------------------------------
@@ -352,50 +466,99 @@
    * through the search box and put it back afterwards — the table is the user's
    * working view and must be left as we found it.
    */
-  async function enqueue(player) {
+  /** Add (want=true) or remove (want=false) one player from Yahoo's queue. */
+  async function toggleQueue(player, want) {
     let el = document.querySelector(`.ys-addqueue[data-id="${player.id}"]`);
     let usedSearch = false;
     const prev = searchBox()?.value ?? '';
-
     if (!el) {
-      if (!setSearch(player.name.replace(/^[A-Z]\.\s*/, ''))) return false;
+      if (!setSearch((player.name || '').replace(/^[A-Z]\.\s*/, ''))) return false;
       usedSearch = true;
-      await sleep(900);
+      await sleep(1000);
       el = document.querySelector(`.ys-addqueue[data-id="${player.id}"]`);
     }
-
     let ok = false;
     if (el) {
       const before = queueCount();
-      if (CFG.DRY_RUN) {
-        say(`DRY RUN would queue ${player.name} (${player.pos}) val ${player.val ?? '-'}`);
-        ok = true;
-      } else {
+      if (CFG.DRY_RUN && want) { say(`DRY RUN would queue ${player.name}`); ok = true; }
+      else {
         el.click();
-        await sleep(700);
-        ok = queueCount() > before;   // trust the badge, not the click
-        say(ok ? `queued ${player.name} (${player.pos}) val ${player.val ?? '-'}`
-               : `queue click did not take for ${player.name}`);
+        await sleep(650);
+        const after = queueCount();
+        ok = want ? after > before : after < before;   // trust the badge, not the click
       }
-    } else {
-      say(`could not locate row for ${player.name}`);
-    }
-
+    } else say(`row not found: ${player.name}`);
     if (usedSearch) { setSearch(prev); await sleep(500); }
     return ok;
+  }
+
+  /**
+   * Remove everything we queued. Called after WE draft: the roster changed, so
+   * every queued player was chosen against a stale set of needs.
+   */
+  async function purgeQueue() {
+    let removed = 0;
+    for (const id of state.queued.slice()) {
+      const pl = state.pool.get(id);
+      if (!pl) { state.queued = state.queued.filter((x) => x !== id); continue; }
+      if (await toggleQueue(pl, false)) {
+        state.queued = state.queued.filter((x) => x !== id);
+        removed++;
+      }
+    }
+    if (removed) say(`purged ${removed} from queue after our pick`);
+    return removed;
+  }
+
+  /** Available (undrafted, unrostered) count per position. */
+  function availableByPos() {
+    const mine = new Set(roster().map((h) => key(h.name, h.pos)));
+    const out = {};
+    for (const p of state.pool.values()) {
+      if (state.taken.has(key(p.name, p.pos)) || mine.has(key(p.name, p.pos))) continue;
+      out[p.pos] = (out[p.pos] || 0) + 1;
+    }
+    return out;
+  }
+
+  /**
+   * Once half a position's pool has been drafted, re-read its top 100 so late
+   * rounds still see a full board instead of the dregs of the original pull.
+   */
+  async function replenish() {
+    const sel = posFilter();
+    if (!sel) return 0;
+    const low = Object.entries(availableByPos()).filter(([, n]) => n < 50).map(([pos]) => pos);
+    if (!low.length) return 0;
+    const prev = sel.value;
+    let added = 0;
+    for (const pos of low) {
+      const opt = [...sel.options].find((o) => o.text.trim() === POS_LABEL[pos]);
+      if (!opt) continue;
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(1500);
+      for (const p of readRows()) if (!state.pool.has(p.id)) { state.pool.set(p.id, p); added++; }
+      say(`replenished ${pos}: ${availableByPos()[pos] || 0} now available`);
+    }
+    sel.value = prev;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(800);
+    return added;
   }
 
   async function refill() {
     const need = CFG.QUEUE_SIZE - queueCount();
     if (need <= 0) return;
-    const ranked = rankAvailable();
-    if (!ranked.length) return;
-    say(`queue at ${queueCount()}/${CFG.QUEUE_SIZE}, adding ${need}`);
-    for (const p of ranked.slice(0, need)) {
-      if (myTurn()) { say('your turn started — stopping mid-refill'); return; }
-      const ok = await enqueue(p);
-      if (ok && !CFG.DRY_RUN) state.queued.push(p.id);
-      else if (ok && CFG.DRY_RUN) state.queued.push(p.id);
+    const plan = planQueue(need);
+    if (!plan.length) return;
+    say(`queue ${queueCount()}/${CFG.QUEUE_SIZE} — adding ${plan.length}`);
+    for (const p of plan) {
+      if (myTurn()) { say('your turn started — stopping refill'); return; }
+      if (await toggleQueue(p, true)) {
+        state.queued.push(p.id);
+        say(`queued ${p.name} ${p.pos}-${p.team} val ${p.val} (${p.role}, po ${p.playoffMod}, bye ${p.byeMod})`);
+      }
     }
   }
 
@@ -403,83 +566,35 @@
   // One-time pool read
   // ---------------------------------------------------------------------------
 
+  const POS_LABEL = { QB: 'Quarterbacks', RB: 'Running Backs', WR: 'Wide Receivers',
+                      TE: 'Tight Ends', K: 'Kickers', DEF: 'Team Defenses' };
   const posFilter = () => [...document.querySelectorAll('select')]
     .find((s) => /All Positions/i.test(s.options?.[0]?.text || ''));
 
   async function readPool() {
     const sel = posFilter();
     const prev = sel?.value;
-    let total = 0;
-
-    for (const [pos, depth] of CFG.POOL) {
+    for (const label of CFG.POOL) {
       if (sel) {
-        const opt = [...sel.options].find((o) => new RegExp(pos.replace(/\//g, '.'), 'i').test(o.text));
-        if (opt) {
-          sel.value = opt.value;
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-          await sleep(1200);
-        }
+        const opt = [...sel.options].find((o) => o.text.trim() === label);
+        if (!opt) { say(`pool: no filter option "${label}"`); continue; }
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(1500);
       }
-      // The table lazy-loads on scroll rather than paginating; scroll until the
-      // row count stops growing or we have the depth we asked for.
-      let seen = 0, stagnant = 0;
-      while (seen < depth && stagnant < 3) {
-        for (const p of readRows()) {
-          if (!state.pool.has(p.id)) { state.pool.set(p.id, p); total++; }
-        }
-        const now = readRows().length;
-        if (now <= seen) stagnant++; else stagnant = 0;
-        seen = now;
-        const tbl = playerTable();
-        if (tbl) tbl.parentElement.scrollTop = tbl.parentElement.scrollHeight;
-        await sleep(600);
-      }
-      say(`pool: ${pos} -> ${seen} rows seen`);
+      let added = 0;
+      for (const p of readRows()) if (!state.pool.has(p.id)) { state.pool.set(p.id, p); added++; }
+      say(`pool: ${label} +${added}`);
     }
-
     if (sel && prev !== undefined) {
       sel.value = prev;
       sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(800);
     }
-    say(`pool read complete: ${total} players`);
-    try { localStorage.setItem('ys_pool', JSON.stringify([...state.pool.values()]
-      .map(({ row, ...p }) => p))); } catch (e) { /* private mode */ }
+    const byPos = [...state.pool.values()].reduce((a, p) => (a[p.pos] = (a[p.pos] || 0) + 1, a), {});
+    say(`pool read complete: ${state.pool.size} — ${JSON.stringify(byPos)}`);
   }
 
-  // ---------------------------------------------------------------------------
-  // Loop
-  // ---------------------------------------------------------------------------
-
-  let busy = false;
-  async function tick() {
-    if (busy || complete()) return;
-    busy = true;
-    try {
-      dismissInactivityDialog();
-      if (!state.armed) {
-        if (!playerTable()) return;          // room not up yet
-        await readPool();
-        state.armed = true;
-      }
-      foldPicks();
-
-      // THE RULE: during your turn we do nothing at all. You own the pick, and the
-      // queue already holds the fallback if your clock runs out.
-      if (myTurn()) return;
-
-      if (queueCount() < CFG.QUEUE_SIZE) await refill();
-      try { localStorage.setItem('ys_dump', JSON.stringify(window.__queueDump())); } catch (e) {}
-    } catch (e) {
-      say(`ERROR ${e.message}`);
-    } finally {
-      busy = false;
-    }
-  }
-
-  /**
-   * Everything the valuation is built on, in one object, so a run can be audited
-   * after the fact rather than trusted. Also mirrored to localStorage each tick.
-   */
   window.__queueDump = () => {
     const ranked = state.armed ? rankAvailable() : [];
     return {
@@ -505,8 +620,13 @@
     };
   };
 
+  // The autopick dialog must be gone before the next pick, so it cannot wait for
+  // the tick — a 2.5s poll plus render lag is far too slow in practice.
+  const dialogObserver = new MutationObserver(() => ensureLiveDrafting());
+  dialogObserver.observe(document.body, { childList: true, subtree: true });
+
   const timer = setInterval(tick, CFG.TICK_MS);
-  window.__queueStop = () => { clearInterval(timer); say('stopped'); };
+  window.__queueStop = () => { clearInterval(timer); dialogObserver.disconnect(); say('stopped'); };
   window.__queueState = state;
   say(`armed — ${CFG.DRY_RUN ? 'DRY RUN' : 'LIVE'}, target ${CFG.QUEUE_SIZE}, slot ${CFG.SLOT}`);
 })();

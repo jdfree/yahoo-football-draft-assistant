@@ -130,6 +130,53 @@ At `0`, byes are ignored. At `1`, a player who would leave a starting slot with
 nobody active that week is worth nothing. At the default `0.5`, the first
 collision at a one-slot position halves his value.
 
+## 5. Last-second pick
+
+| Parameter | Default |
+| --- | --- |
+| `AUTOPICK_AT_SECONDS` | `0` |
+
+Seconds left on *your* clock at which the manager drafts the top of the queue
+itself. `0` means never — let the clock expire and Yahoo take the queue top.
+
+This is more than convenience. **Yahoo switches your team into autopick mode
+whenever a pick timer actually expires**, and from then on every pick is made for
+you until you switch it back off. Setting this to 2 means your timer never
+expires, so that never triggers.
+
+It is the only circumstance in which the manager drafts. Every other tick during
+your turn it does nothing at all.
+
+## Keeping control of your picks
+
+Yahoo turns autodraft on by itself after an expired timer and shows a dialog
+saying so. The manager watches for that dialog with a `MutationObserver` and
+dismisses it immediately, then switches autodraft back off.
+
+This is deliberately *not* on the periodic tick — a 2.5 second poll plus render
+lag was too slow in a live test, and the dialog needs to be gone before the next
+pick. The toggle is outline-styled when off and filled when on, with no ARIA
+state to read, so it is detected by background colour.
+
+## Pool replenishment
+
+The pool is read once at the start, top 100 per position. Once a position drops
+below **50 available**, that position is re-read so late rounds still see a full
+board rather than the dregs of the original pull.
+
+The player table caps at 100 rows per view and does not lazy-load past it, which
+is why the pool is pulled per position rather than as one deep Flex query.
+
+## Rebuilding after your own pick
+
+When you draft, the roster changes and every queued player was chosen against
+needs that no longer hold. The manager purges the whole queue and rebuilds it.
+
+Within a single refill pass the queue is also planned *sequentially* — each
+provisional pick is added to a working roster before the next slot is scored.
+Without that, all five slots are scored against the same roster and you get five
+kickers for a one-kicker slot.
+
 ## Kickers and defenses
 
 These are not valued like everyone else, and the difference is deliberate.

@@ -172,6 +172,17 @@
    * matter which tab is open. Reading the queue's CONTENTS would require making
    * the Queue tab active, which would yank the UI away from you mid-draft.
    */
+  /** The left panel's two tabs: "Queue <n>" and, to its right, "Picks". */
+  function panelTabs() {
+    const all = [...document.querySelectorAll('button,[role=tab]')];
+    return {
+      queue: all.find((b) => /^Queue\b/i.test((b.innerText || '').trim())),
+      picks: all.find((b) => /^Picks$/i.test((b.innerText || '').trim())),
+    };
+  }
+  const activeTab = () =>
+    (document.querySelector('[aria-selected=true]')?.innerText || '').trim().split('\n')[0];
+
   function queueCount() {
     const tab = [...document.querySelectorAll('button,[role=tab]')]
       .find((b) => /^Queue\b/i.test((b.innerText || '').trim()));
@@ -186,10 +197,10 @@
    * covers that: whatever is in the table at arm time is what is still available.
    */
   /**
-   * The picks feed only exists in the DOM while the Picks tab is the active one.
-   * If the user is looking at their Queue instead, this returns nothing — which
-   * silently disabled availability tracking for an entire test draft. The header's
-   * "Last: NAME (POS · TEAM)" line is always present, so it backs the feed up.
+   * The header's "Last: NAME (POS)" line is always visible but only ever shows ONE
+   * pick, and it turns over faster than any poll when several teams autodraft back
+   * to back — picks slip through unrecorded. It is kept only as a cheap supplement;
+   * the Picks panel is the real source.
    */
   function scanLastPick() {
     const m = document.body.innerText.replace(/\s+/g, ' ')
@@ -239,6 +250,26 @@
     btn.click();
     say(`autopick at ${secondsLeft()}s — drafted ${pl.name} (${pl.pos}) from queue top`);
     return true;
+  }
+
+  /**
+   * Read the pick history off the Picks panel, which holds a rolling window of
+   * roughly seventy picks — enough that a burst of autodrafts cannot outrun it.
+   *
+   * The panel only exists in the DOM while its tab is active, so this switches to
+   * it, reads, and switches back to whatever the user was looking at. Done once
+   * before regenerating the queue rather than on every tick, to keep the UI still.
+   */
+  async function syncPicksFromPanel() {
+    const t = panelTabs();
+    if (!t.picks) return foldPicks();
+    const was = activeTab();
+    const mustSwitch = !/^Picks$/i.test(was);
+    if (mustSwitch) { t.picks.click(); await sleep(450); }
+    const n = foldPicks();
+    if (mustSwitch && t.queue) { t.queue.click(); await sleep(250); }
+    if (n) say(`picks panel: +${n} new (${state.taken.size} drafted overall)`);
+    return n;
   }
 
   const myTurn = () => {
@@ -294,10 +325,12 @@
   const key = (name, pos) => `${name.replace(/\s+/g, ' ').trim().toUpperCase()}|${pos}`;
 
   function foldPicks() {
+    let n = 0;
     for (const lp of scanLastPick()) {
       if (state.seenPicks.has(lp.pick)) continue;
       state.seenPicks.add(lp.pick);
       state.taken.add(key(lp.name, lp.pos));
+      n++;
       state.queued = state.queued.filter((id) => {
         const pl = state.pool.get(id);
         return !pl || key(pl.name, pl.pos) !== key(lp.name, lp.pos);
@@ -306,6 +339,7 @@
     for (const p of scanPicks()) {
       if (state.seenPicks.has(p.pick)) continue;
       state.seenPicks.add(p.pick);
+      n++;
       const m = p.text.match(/^(.+?)\s+\b(QB|RB|WR|TE|K|DEF)\b/);
       if (m) {
         state.taken.add(key(m[1], m[2]));
@@ -316,6 +350,7 @@
         });
       }
     }
+    return n;
   }
 
   // ---------------------------------------------------------------------------
@@ -651,6 +686,57 @@
     say(`saved ${name} (${d.poolSize} players, ${body.length} bytes)`);
     return name;
   };
+
+  // ---------------------------------------------------------------------------
+  // Loop
+  // ---------------------------------------------------------------------------
+
+  let busy = false;
+  async function tick() {
+    if (busy || complete()) return;
+    busy = true;
+    try {
+      ensureLiveDrafting();
+
+      if (!state.armed) {
+        if (!playerTable()) return;          // room not up yet
+        await readPool();
+        state.lastRoster = roster().length;
+        state.armed = true;
+      }
+
+      foldPicks();                           // cheap header read, every tick
+
+      if (myTurn()) {
+        // Your clock, your pick. The only exception is the last-second safety net.
+        const left = secondsLeft();
+        if (CFG.AUTOPICK_AT_SECONDS > 0 && left !== null && left <= CFG.AUTOPICK_AT_SECONDS) {
+          await draftQueueTop();
+        }
+        return;
+      }
+
+      const rc = roster().length;
+      const weDrafted = rc > state.lastRoster;
+      const short = queueCount() < CFG.QUEUE_SIZE;
+
+      // Only disturb the tabs when we are actually about to rebuild the queue.
+      if (weDrafted || short) await syncPicksFromPanel();
+
+      // Our own pick invalidates the queue's premise: the roster changed, so
+      // every queued player was chosen against needs that no longer hold.
+      if (weDrafted) { state.lastRoster = rc; await purgeQueue(); }
+
+      await replenish();
+      if (queueCount() < CFG.QUEUE_SIZE) await refill();
+
+      try { localStorage.setItem('ys_dump', JSON.stringify(window.__queueDump())); } catch (e) {}
+    } catch (e) {
+      say(`ERROR ${e.message}`);
+    } finally {
+      busy = false;
+    }
+  }
 
   const timer = setInterval(tick, CFG.TICK_MS);
   window.__queueStop = () => { clearInterval(timer); dialogObserver.disconnect(); say('stopped'); };

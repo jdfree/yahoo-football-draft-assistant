@@ -169,6 +169,21 @@ lag was too slow in a live test, and the dialog needs to be gone before the next
 pick. The toggle is outline-styled when off and filled when on, with no ARIA
 state to read, so it is detected by background colour.
 
+## Tracking who has been drafted
+
+Availability comes from the **Picks panel**, the tab immediately right of "Queue"
+in the left column. It holds a rolling window of roughly seventy picks.
+
+The draft header also carries a `Last: NAME (POS)` line, and that is read on every
+tick because it is free. But it shows only ONE pick and turns over faster than any
+poll when several teams autodraft back to back, so picks slip through unrecorded.
+It is a supplement, never the source.
+
+The Picks panel only exists in the DOM while its tab is active, so the manager
+switches to it, reads the history, and switches back to whatever you were looking
+at. That happens only immediately before the queue is regenerated — not on every
+tick — so the UI stays still while you are working.
+
 ## Pool replenishment
 
 The pool is read once at the start, top 100 per position. Once a position drops

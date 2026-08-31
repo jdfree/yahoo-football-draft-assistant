@@ -187,6 +187,41 @@
       picks: all.find((b) => /^Picks$/i.test((b.innerText || '').trim())),
     };
   }
+  /**
+   * The centre tabs: Players | Board | Results | Standings | Ultra Draft Kit.
+   * The player table only exists under "Players", so if the human is reading the
+   * Board or Results our queue work silently finds nothing. Switch to Players for
+   * the operation and put their tab back afterwards.
+   */
+  const CENTRE_TABS = ['Players', 'Board', 'Results', 'Standings', 'Ultra Draft Kit'];
+  function centreTab(name) {
+    return [...document.querySelectorAll('button,[role=tab],a')]
+      .find((b) => (b.innerText || '').trim() === name);
+  }
+  function activeCentreTab() {
+    for (const n of CENTRE_TABS) {
+      const t = centreTab(n);
+      if (t && (t.getAttribute('aria-selected') === 'true'
+        || /border-bottom/.test(getComputedStyle(t).cssText || ''))) return n;
+    }
+    return playerTable() ? 'Players' : null;
+  }
+  async function withPlayersTab(fn) {
+    const was = activeCentreTab();
+    const needSwitch = was && was !== 'Players';
+    if (needSwitch) {
+      const t = centreTab('Players');
+      if (t) { t.click(); await sleep(700); say(`switched to Players (you were on ${was})`); }
+    }
+    try { return await fn(); }
+    finally {
+      if (needSwitch) {
+        const back = centreTab(was);
+        if (back) { back.click(); await sleep(400); say(`restored your ${was} tab`); }
+      }
+    }
+  }
+
   const activeTab = () =>
     (document.querySelector('[aria-selected=true]')?.innerText || '').trim().split('\n')[0];
 
@@ -295,6 +330,16 @@
    * That also restores the interaction Yahoo counts as activity, which is why no
    * separate idle-timer heartbeat is needed.
    */
+  /**
+   * Autodraft ON renders solid purple WITH `svg[data-icon="checkmark-default"]`;
+   * OFF is white with no checkmark. Key on the icon — semantic, not a colour guess.
+   */
+  function autodraftOn() {
+    const b = [...document.querySelectorAll('button')]
+      .find((x) => /Autodraft/i.test((x.innerText || '').trim()));
+    return !!(b && b.querySelector('svg[data-icon="checkmark-default"]'));
+  }
+
   function ensureLiveDrafting() {
     let acted = false;
 
@@ -327,6 +372,9 @@
     seenPicks: new Set(),   // pick numbers already folded into `taken`
     armed: false,
     lastRoster: 0,
+    initialByPos: {},       // depth each position actually yielded on first read
+    exhausted: {},          // positions with nothing left to re-read
+    working: false,         // true while we are clicking in the queue UI
   };
 
   const key = (name, pos) => `${name.replace(/\s+/g, ' ').trim().toUpperCase()}|${pos}`;
@@ -506,40 +554,45 @@
    * whatever sits between them can be sniped too. So when picks are back to back
    * the queue is a strict sequence, hard-capped at one kicker and one defense.
    */
+  /** The queue's current contents, valued as if they were not queued. */
+  function queueView() {
+    const saved = state.queued;
+    state.queued = [];
+    let ranked;
+    try { ranked = rankAvailable([]); } finally { state.queued = saved; }
+    const byId = new Map(ranked.map((p) => [p.id, p]));
+    return saved.map((id) => byId.get(id)
+      || Object.assign({}, state.pool.get(id) || { name: '?', pos: '?', team: '' }, { val: null }));
+  }
+
   function planQueue(n) {
     const b2b = backToBack();
+    // Players ALREADY queued must count as provisional roster additions. Refilling
+    // one slot at a time re-planned against the roster alone, so each pass added
+    // another defense: a live queue reached DEF,K,DEF,DEF,K and autodraft put two
+    // defenses on the roster before it was caught.
+    const queued = queueView().filter((p) => p && p.pos && p.pos !== '?');
     const chosen = [];
-    const sequence = [];                 // provisional roster additions
+    const sequence = queued.slice();
+
     while (chosen.length < n) {
       const ranked = rankAvailable(sequence).filter((p) => !chosen.some((c) => c.id === p.id));
       if (!ranked.length) break;
       const pick = ranked[0];
       chosen.push(pick);
       sequence.push(pick);
-
-      if (chosen.length === 1 && !b2b && isScarce(pick.pos, roster())) {
-        const backup = rankAvailable([])
-          .find((p) => p.pos === pick.pos && p.id !== pick.id);
-        if (backup && chosen.length < n) {
-          chosen.push(backup);           // insurance only — NOT part of the sequence
-          say(`queue: ${backup.name} added as ${pick.pos} backup behind ${pick.name}`);
-        }
+      if (chosen.length === 1 && !queued.length && !b2b && isScarce(pick.pos, roster())) {
+        const backup = rankAvailable([]).find((p) => p.pos === pick.pos && p.id !== pick.id);
+        if (backup && chosen.length < n) chosen.push(backup);
       }
     }
 
-    if (b2b) {
-      // Hard guard, independent of how the sequence was built.
-      const seen = { K: 0, DEF: 0 };
-      const capped = chosen.filter((p) => {
-        if (p.pos !== 'K' && p.pos !== 'DEF') return true;
-        return ++seen[p.pos] <= 1;
-      });
-      if (capped.length !== chosen.length) {
-        say(`back-to-back picks — capped queue at one K and one DEF`);
-      }
-      return capped;
-    }
-    return chosen;
+    const cap = b2b ? 1 : 2;
+    const seen = { K: queued.filter((p) => p.pos === 'K').length,
+                   DEF: queued.filter((p) => p.pos === 'DEF').length };
+    const out = chosen.filter((p) => (p.pos !== 'K' && p.pos !== 'DEF') ? true : (++seen[p.pos] <= cap));
+    if (out.length !== chosen.length) say(`capped K/DEF at ${cap}${b2b ? ' (back to back)' : ''}`);
+    return out;
   }
 
   // ---------------------------------------------------------------------------
@@ -589,21 +642,89 @@
   }
 
   /**
-   * Remove everything we queued. Called after WE draft: the roster changed, so
-   * every queued player was chosen against a stale set of needs.
+   * Always hand the table back readable: All Positions, no search text. Restoring
+   * "whatever it was" left our own last filter applied, so the human was looking at
+   * a filtered board without knowing why.
    */
-  async function purgeQueue() {
-    let removed = 0;
-    for (const id of state.queued.slice()) {
-      const pl = state.pool.get(id);
-      if (!pl) { state.queued = state.queued.filter((x) => x !== id); continue; }
-      if (await toggleQueue(pl, false)) {
-        state.queued = state.queued.filter((x) => x !== id);
-        removed++;
-      }
+  async function clearFilters() {
+    const sel = posFilter();
+    if (sel && sel.selectedIndex !== 0) {
+      sel.value = sel.options[0].value;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(600);
     }
-    if (removed) say(`purged ${removed} from queue after our pick`);
+    const box = searchBox();
+    if (box && box.value) { setSearch(''); await sleep(400); }
+  }
+
+  /**
+   * Remove entries through the QUEUE PANEL, not the player table. Once a player is
+   * drafted or filtered out of the table there is no star left to click there, so
+   * table-based removal silently fails. Each queue row has its own
+   * `svg[data-icon="star-filled"]` button, which always works.
+   */
+  async function removeFromQueue(pred) {
+    const tabs = panelTabs();
+    const was = activeTab();
+    const mustSwitch = !/^Queue/i.test(was);
+    if (mustSwitch && tabs.queue) { tabs.queue.click(); await sleep(700); }
+    const removed = [];
+    for (let guard = 0; guard < 12; guard++) {
+      const items = [...document.querySelectorAll('.ys-player')].filter((e) => /ADP:/.test(e.innerText));
+      let target = null, info = null;
+      for (const e of items) {
+        const pl = parsePlayer(e);
+        if (pl && pred(pl)) { target = e; info = pl; break; }
+      }
+      if (!target) break;
+      const btn = [...(target.closest('li,div[class*="D(f)"]') || target.parentElement)
+        .querySelectorAll('button')].find((b) => b.querySelector('svg[data-icon="star-filled"]'));
+      if (!btn) break;
+      const before = queueCount();
+      btn.click();                        // info captured BEFORE the node detaches
+      await sleep(700);
+      if (queueCount() >= before) break;
+      removed.push(`${info.name} (${info.pos})`);
+      state.queued = state.queued.filter((id) => {
+        const q = state.pool.get(id);
+        return !q || !(q.name === info.name && q.pos === info.pos);
+      });
+    }
+    if (mustSwitch && /^Picks$/i.test(was) && tabs.picks) { tabs.picks.click(); await sleep(250); }
+    if (removed.length) say(`removed from queue: ${removed.join(', ')}`);
     return removed;
+  }
+
+  /**
+   * Drop queue entries that are no longer legal. Once a kicker or defense is on the
+   * roster we will essentially never want another, so every remaining one is pulled
+   * immediately — a live draft ended up with two defenses because stale queue
+   * entries were still there when the clock expired.
+   */
+  async function pruneQueue() {
+    const have = roster();
+    const cap = backToBack() ? 1 : 2;
+    const seen = { K: 0, DEF: 0 };
+    const bad = new Set();
+    for (const p of queueView()) {
+      const rostered = have.filter((h) => h.pos === p.pos).length;
+      if ((p.pos === 'K' || p.pos === 'DEF') && rostered >= (CFG.CAPS[p.pos] || 1)) {
+        bad.add(`${p.name}|${p.pos}`); continue;
+      }
+      if (p.val === null) { bad.add(`${p.name}|${p.pos}`); continue; }
+      if (p.pos === 'K' || p.pos === 'DEF') { if (++seen[p.pos] > cap) bad.add(`${p.name}|${p.pos}`); }
+    }
+    if (!bad.size) return [];
+    const out = await removeFromQueue((pl) => bad.has(`${pl.name}|${pl.pos}`));
+    await clearFilters();
+    return out;
+  }
+
+  /** Clear the whole queue — used after WE draft, since our needs changed. */
+  async function purgeQueue() {
+    const out = await removeFromQueue(() => true);
+    await clearFilters();
+    return out.length;
   }
 
   /** Available (undrafted, unrostered) count per position. */
@@ -624,7 +745,14 @@
   async function replenish() {
     const sel = posFilter();
     if (!sel) return 0;
-    const low = Object.entries(availableByPos()).filter(([, n]) => n < 50).map(([pos]) => pos);
+    // "Half drafted" is relative to what that position actually yielded, not a flat
+    // number. Only 32 defenses exist, so a fixed threshold of 50 made DEF
+    // permanently "low" and re-read it every tick, flipping the filter constantly.
+    const low = Object.entries(availableByPos()).filter(([pos, n]) => {
+      if (state.exhausted[pos]) return false;
+      const init = state.initialByPos[pos] || n;
+      return n < init / 2;
+    }).map(([pos]) => pos);
     if (!low.length) return 0;
     const prev = sel.value;
     let added = 0;
@@ -634,8 +762,15 @@
       sel.value = opt.value;
       sel.dispatchEvent(new Event('change', { bubbles: true }));
       await sleep(1500);
-      for (const p of readRows()) if (!state.pool.has(p.id)) { state.pool.set(p.id, p); added++; }
-      say(`replenished ${pos}: ${availableByPos()[pos] || 0} now available`);
+      let got = 0;
+      for (const p of readRows()) if (!state.pool.has(p.id)) { state.pool.set(p.id, p); added++; got++; }
+      if (got === 0) {
+        state.exhausted[pos] = true;
+        say(`replenish ${pos}: nothing new — exhausted, will not retry`);
+      } else {
+        state.initialByPos[pos] = availableByPos()[pos] || 0;
+        say(`replenished ${pos} +${got} -> ${availableByPos()[pos] || 0} available`);
+      }
     }
     sel.value = prev;
     sel.dispatchEvent(new Event('change', { bubbles: true }));
@@ -762,6 +897,7 @@
       if (!state.armed) {
         if (!playerTable()) return;          // room not up yet
         await readPool();
+        state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;
         state.armed = true;
       }
@@ -789,8 +925,17 @@
       // every queued player was chosen against needs that no longer hold.
       if (weDrafted) { state.lastRoster = rc; await purgeQueue(); }
 
-      await replenish();
-      if (queueCount() < CFG.QUEUE_SIZE) await refill();
+      // Flag the overlay while we click around the queue UI, so the human knows to
+      // keep hands off rather than fighting us for the mouse.
+      state.working = true;
+      renderOverlay();
+      try {
+        await withPlayersTab(async () => {
+          await pruneQueue();
+          await replenish();
+          if (queueCount() < CFG.QUEUE_SIZE) { await refill(); await clearFilters(); }
+        });
+      } finally { state.working = false; renderOverlay(); }
 
       try { localStorage.setItem('ys_dump', JSON.stringify(window.__queueDump())); } catch (e) {}
       renderOverlay();
@@ -826,65 +971,79 @@
     return overlayEl;
   }
 
+  /**
+   * Shows what is ACTUALLY in the queue, and explains the number next to each
+   * player. Deliberately does NOT repeat whose pick it is or the round — Yahoo
+   * already shows both, and a second copy just goes stale.
+   */
   function renderOverlay() {
     const el = overlay();
     if (!el) { if (overlayEl) { overlayEl.remove(); overlayEl = null; } return; }
-
-    // Yahoo's own dialogs must stay visible and clickable — the autopick dialog
-    // especially. Hide rather than risk covering it.
-    if (document.querySelector('[role=dialog],[aria-modal=true]')) {
-      el.style.display = 'none';
-      return;
-    }
+    // Yahoo's autopick dialog carries no role=dialog, so match it by text.
+    const dlg = [...document.querySelectorAll('div,section')]
+      .some((e) => /autopick mode|inactivity/i.test(e.innerText || '') && (e.innerText || '').length < 400);
+    if (dlg) { el.style.display = 'none'; return; }
     el.style.display = '';
 
     const esc = (t) => String(t ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-    const mine = myTurn();
-    const left = secondsLeft();
-    const ranked = state.armed ? planQueue(CFG.OVERLAY_ROWS) : [];
-    const b2b = backToBack();
+    const badge = queueCount();
+    const q = queueView();
+    const next = state.armed ? planQueue(3) : [];
 
-    const head = mine
-      ? `<span style="color:#e0a340">YOUR PICK${left !== null ? ` · ${left}s` : ''}</span>`
-      : `queue ${queueCount()}/${CFG.QUEUE_SIZE} · R${roundNow()}`;
-
-    const rows = ranked.map((p, i) => {
-      const note = p.role === 'must-fill' ? 'must fill'
-        : p.role === 'reserve' ? `reserve x${CFG.WEIGHT_RESERVE}`
-        : p.role === 'flex' ? 'flex' : 'starter slot';
-      const flags = [];
-      if (p.playoffMod && Math.abs(p.playoffMod - 1) > 0.005) flags.push(`po ${p.playoffMod > 1 ? '+' : ''}${((p.playoffMod - 1) * 100).toFixed(1)}%`);
-      if (p.byeMod && p.byeMod < 1) flags.push(`bye -${((1 - p.byeMod) * 100).toFixed(0)}%`);
-      return `<div style="display:flex;gap:6px;margin-top:3px">` +
-        `<span style="color:#7c8894;width:12px">${i + 1}</span>` +
+    const row = (p, label, dim) => {
+      const bits = [];
+      if (p.val === null) bits.push('no longer available');
+      else {
+        const repl = p.proj - (p.raw ?? 0);
+        bits.push(`scores ${Math.round(p.proj)}`);
+        bits.push(`${Math.round(repl)} if you wait`);
+        if (p.role === 'starter') bits.push(`fills ${p.pos} slot`);
+        else if (p.role === 'flex') bits.push('fills flex');
+        else if (p.role === 'reserve') bits.push('bench only');
+        else if (p.role === 'must-fill') bits.push(`must fill ${p.pos}`);
+        if (p.playoffMod && Math.abs(p.playoffMod - 1) > 0.005)
+          bits.push(`playoff sched ${p.playoffMod > 1 ? '+' : ''}${((p.playoffMod - 1) * 100).toFixed(1)}%`);
+        if (p.byeMod && p.byeMod < 1) bits.push(`bye clash −${((1 - p.byeMod) * 100).toFixed(0)}%`);
+      }
+      return `<div style="display:flex;gap:6px;margin-top:4px;opacity:${dim ? 0.6 : 1}">` +
+        `<span style="color:#7c8894;width:11px">${label}</span>` +
         `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">` +
-        `${esc(p.name)} <span style="color:#7c8894">${esc(p.pos)}-${esc(p.team)}</span></span>` +
-        `<span style="color:${p.val > 0 ? '#5cb585' : '#7c8894'};text-align:right;width:52px">` +
-        `${p.val === Infinity ? 'MUST' : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span></div>` +
-        `<div style="color:#7c8894;margin-left:18px">${note}${flags.length ? ' · ' + flags.join(' · ') : ''}</div>`;
-    }).join('');
+        `${esc(p.name)} <span style="color:#7c8894">${esc(p.pos)}${p.team ? '-' + esc(p.team) : ''}</span></span>` +
+        `<span style="color:${p.val > 0 ? '#5cb585' : '#7c8894'};text-align:right;width:46px">` +
+        `${p.val === null ? '—' : p.val === Infinity ? 'MUST' : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span></div>` +
+        `<div style="color:#7c8894;margin-left:17px;opacity:${dim ? 0.6 : 1}">${bits.join(' · ')}</div>`;
+    };
 
-    const adOff = !(() => {
-      const t = [...document.querySelectorAll('button')].find((b) => /^Autodraft$/i.test((b.innerText || '').trim()));
-      if (!t) return false;
-      const bg = getComputedStyle(t).backgroundColor;
-      return bg && !/rgba?\(0, 0, 0, 0\)|transparent|rgb\(255, 255, 255\)/i.test(bg);
-    })();
+    const busy = state.working
+      ? `<div style="background:#e0a340;color:#12151a;font-weight:700;text-align:center;` +
+        `margin:-9px -11px 7px;padding:5px 0;border-radius:7px 7px 0 0">` +
+        `UPDATING QUEUE — HANDS OFF</div>` : '';
 
-    el.innerHTML =
+    el.innerHTML = busy +
       `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2b333c;padding-bottom:5px">` +
-      `<b>DRAFT ASSISTANT</b><span>${head}</span></div>` +
-      (mine ? `<div style="color:#e0a340;margin-top:4px">hands off — your pick` +
-              `${CFG.AUTOPICK_AT_SECONDS > 0 ? `, auto at ${CFG.AUTOPICK_AT_SECONDS}s` : ''}</div>` : '') +
-      rows +
-      `<div style="color:#7c8894;border-top:1px solid #2b333c;margin-top:6px;padding-top:5px">` +
-      `pool ${state.pool.size} · drafted ${state.taken.size} · ` +
-      `<span style="color:${adOff ? '#5cb585' : '#e27a72'}">autodraft ${adOff ? 'off' : 'ON'}</span>` +
-      `${b2b ? ' · <span style="color:#e0a340">back-to-back: 1 K/DEF</span>' : ''}</div>`;
+      `<b>QUEUE</b><span style="color:#7c8894">${q.length}/${CFG.QUEUE_SIZE}` +
+      `${badge !== q.length ? ` <span style="color:#e27a72">badge ${badge}</span>` : ''}</span></div>` +
+      `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
+      `<span style="flex:1">PLAYER</span><span style="width:46px;text-align:right">GAIN</span></div>` +
+      (q.length ? q.map((p, i) => row(p, i + 1, false)).join('')
+                : '<div style="color:#7c8894;margin-top:4px">empty</div>') +
+      (next.length ? `<div style="color:#7c8894;border-top:1px dashed #2b333c;margin-top:7px;padding-top:4px">NEXT UP</div>` +
+        next.map((p) => row(p, '·', true)).join('') : '') +
+      `<div style="color:#7c8894;border-top:1px solid #2b333c;margin-top:7px;padding-top:5px">` +
+      `<b style="color:#a7b2bd">GAIN</b> = season points you gain by taking this player ` +
+      `now instead of the best one at his position still likely to be there at your ` +
+      `next pick. Adjusted down if he can only sit on your bench, and for playoff ` +
+      `schedule and bye-week clashes.` +
+      `<div style="margin-top:3px">pool ${state.pool.size} · drafted ${state.taken.size} · ` +
+      `<span style="color:${autodraftOn() ? '#e27a72' : '#5cb585'}">autodraft ${autodraftOn() ? 'ON' : 'off'}</span></div></div>`;
   }
 
   const timer = setInterval(tick, CFG.TICK_MS);
-  window.__queueStop = () => { clearInterval(timer); dialogObserver.disconnect(); say('stopped'); };
+  // Own timer: the overlay is read-only and must never be starved by a slow tick —
+  // refills, filter switches and searches all await.
+  const overlayTimer = setInterval(() => { try { renderOverlay(); } catch (e) {} }, 1000);
+  window.__queueStop = () => { clearInterval(timer); clearInterval(overlayTimer);
+    dialogObserver.disconnect(); if (overlayEl) overlayEl.remove(); say('stopped'); };
   window.__queueState = state;
   say(`armed — ${CFG.DRY_RUN ? 'DRY RUN' : 'LIVE'}, target ${CFG.QUEUE_SIZE}, slot ${CFG.SLOT}`);
 })();

@@ -83,6 +83,11 @@
     BYE_FACTOR: 0.5,
   };
 
+  // Loader overrides, so nobody has to edit this file to run it:
+  //   window.YS_CONFIG = { SLOT: 4, TEAMS: 12 };
+  // must be set BEFORE this script is evaluated.
+  if (window.YS_CONFIG) Object.assign(CFG, window.YS_CONFIG);
+
   const LOG = [];
   const say = (m) => { LOG.push(`${new Date().toISOString().slice(11, 19)} ${m}`); console.log('[queue]', m); };
   window.__queueLog = LOG;

@@ -59,6 +59,35 @@ claiming to be Chrome, and the real HTML to anything that identifies honestly as
 script. The script therefore sends its own user-agent. Do not "fix" it by pasting
 in a browser user-agent — that is what breaks it.
 
+## Running it — no extension required
+
+The Yahoo draft room sends **no Content-Security-Policy**, so the page can fetch and
+evaluate the assistant from anywhere. There is no userscript manager to install.
+
+```bash
+python3 serve.py          # serves this directory on http://localhost:8765
+```
+
+Then, from the draft room, run the bookmarklet `serve.py` prints:
+
+```
+javascript:(function(){var s=document.createElement('script');
+s.src='http://localhost:8765/bootstrap.js';document.body.appendChild(s);})()
+```
+
+`bootstrap.js` loads the playoff modifiers and the assistant, and sets
+`window.YS_CONFIG` — so nothing in the repo needs editing to change your slot,
+queue size, or whether it runs live:
+
+```js
+window.YS_CONFIG = { SLOT: 4, TEAMS: 12, DRY_RUN: false, AUTOPICK_AT_SECONDS: 2 };
+```
+
+**One caveat with localhost:** Chrome asks for local-network permission the first
+time the page fetches it, and blocks until you answer. Serving the two files from
+any public HTTPS origin instead avoids the prompt entirely — set
+`window.YS_BASE` to point at it.
+
 ## Queue manager
 
 `queue-manager.user.js` (Tampermonkey) keeps the five best available players in

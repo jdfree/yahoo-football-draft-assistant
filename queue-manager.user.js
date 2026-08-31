@@ -251,7 +251,11 @@
     const needSwitch = was && was !== 'Players';
     if (needSwitch) {
       const t = centreTab('Players');
-      if (t) { t.click(); await sleep(700); say(`switched to Players (you were on ${was})`); }
+      if (t) {
+        t.click();
+        await waitForTable({ minRows: 10 });   // the table fully unmounts on other tabs
+        say(`switched to Players (you were on ${was})`);
+      }
     }
     try { return await fn(); }
     finally {
@@ -876,6 +880,31 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /**
+   * Wait until the player table has actually re-rendered, rather than guessing
+   * with a fixed sleep. Measured live: a centre-tab switch and a position-filter
+   * change both settle in about 100ms, so the old 1500ms sleeps spent roughly
+   * nine seconds of every pool read doing nothing — long enough that a read
+   * starting near your turn was still running when the clock mattered.
+   */
+  async function waitForTable({ minRows = 1, changedFrom = null, timeout = 2500 } = {}) {
+    const first = () => {
+      const el = document.querySelector('table tbody tr .ys-player[data-id]');
+      return el ? el.innerText.split('\n')[0].trim() : null;
+    };
+    const started = Date.now();
+    while (Date.now() - started < timeout) {
+      const n = document.querySelectorAll('.ys-player[data-id]').length;
+      if (n >= minRows && (changedFrom === null || first() !== changedFrom)) return true;
+      await sleep(80);
+    }
+    return false;
+  }
+  const firstRowName = () => {
+    const el = document.querySelector('table tbody tr .ys-player[data-id]');
+    return el ? el.innerText.split('\n')[0].trim() : null;
+  };
+
+  /**
    * Add one player by Yahoo id. If their row is not currently rendered, find them
    * through the search box and put it back afterwards — the table is the user's
    * working view and must be left as we found it.
@@ -1064,9 +1093,10 @@
     for (const pos of low) {
       const opt = [...sel.options].find((o) => o.text.trim() === POS_LABEL[pos]);
       if (!opt) continue;
+      const was = firstRowName();
       sel.value = opt.value;
       sel.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(1500);
+      await waitForTable({ minRows: 1, changedFrom: was });
       let got = 0;
       for (const p of readRows()) if (!state.pool.has(p.id)) { state.pool.set(p.id, p); added++; got++; }
       if (got === 0) {
@@ -1116,9 +1146,10 @@
       if (sel) {
         const opt = [...sel.options].find((o) => o.text.trim() === label);
         if (!opt) { say(`pool: no filter option "${label}"`); continue; }
+        const was = firstRowName();
         sel.value = opt.value;
         sel.dispatchEvent(new Event('change', { bubbles: true }));
-        await sleep(1500);
+        await waitForTable({ minRows: 1, changedFrom: was });
       }
       // Retry: a read taken while the table is mid-render yields nothing, and a
       // silent zero here leaves the whole assistant inert with an empty pool.

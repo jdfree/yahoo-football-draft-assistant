@@ -653,6 +653,18 @@
    * whatever sits between them can be sniped too. So when picks are back to back
    * the queue is a strict sequence, hard-capped at one kicker and one defense.
    */
+  /**
+   * Yahoo's REAL queue contents, readable only while the Queue tab is active.
+   * Returns null when unreadable, so callers fall back to our model instead of
+   * silently showing something that disagrees with what is on screen.
+   */
+  function liveQueue() {
+    if (!/^Queue/i.test(activeTab())) return null;
+    return [...document.querySelectorAll('.ys-player')]
+      .filter((e) => /ADP:/.test(e.innerText))
+      .map(parsePlayer).filter(Boolean);
+  }
+
   /** The queue's current contents, valued as if they were not queued. */
   function queueView() {
     const saved = state.queued;
@@ -812,6 +824,32 @@
    */
   async function pruneQueue() {
     const have = roster();
+
+    /**
+     * The queue is insertion-ordered and Yahoo drafts from the top, so a stale
+     * zero-value flex player sitting above a needed kicker will be taken first
+     * and leave the roster illegal. Once required positions can no longer be
+     * deferred, nothing but those positions belongs in the queue.
+     */
+    {
+      const count = (p) => have.filter((x) => x.pos === p).length;
+      const missing = Object.entries(CFG.STARTERS)
+        .flatMap(([p, k]) => Array(Math.max(0, k - count(p))).fill(p));
+      const picksLeft = rosterSize() - have.length;
+      if (picksLeft > 0 && missing.length >= picksLeft) {
+        const needed = new Set(missing);
+        const view = queueView();
+        const wrong = view.filter((p) => !needed.has(p.pos));
+        if (wrong.length) {
+          say(`must-fill ${[...needed].join('/')} with ${picksLeft} picks left — ` +
+              `clearing ${wrong.length} other entries from the queue`);
+          const names = new Set(wrong.map((p) => `${p.name}|${p.pos}`));
+          await removeFromQueue((pl) => names.has(`${pl.name}|${pl.pos}`));
+          await clearFilters();
+        }
+      }
+    }
+
     const cap = backToBack() ? 1 : 2;
     const seen = { K: 0, DEF: 0 };
     const bad = new Set();
@@ -1132,7 +1170,14 @@
 
     const esc = (t) => String(t ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
     const badge = queueCount();
-    const q = queueView();
+    // Prefer Yahoo's own queue panel when it is on screen — our model drifts.
+    const live = liveQueue();
+    const model = queueView();
+    const source = live ? 'live' : 'model';
+    const q = live
+      ? live.map((p) => Object.assign({}, p,
+          model.find((m) => m.name === p.name && m.pos === p.pos) || {}))
+      : model;
     const next = state.armed ? planQueue(3) : [];
 
     const row = (p, label, dim) => {
@@ -1167,6 +1212,7 @@
     el.innerHTML = busy +
       `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2b333c;padding-bottom:5px">` +
       `<b>QUEUE</b><span style="color:#7c8894">${q.length}/${CFG.QUEUE_SIZE}` +
+      `${source === 'model' ? ' <span style="color:#e0a340">(open Queue tab to sync)</span>' : ''}` +
       `${badge !== q.length ? ` <span style="color:#e27a72">badge ${badge}</span>` : ''}</span></div>` +
       `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
       `<span style="flex:1">PLAYER</span><span style="width:46px;text-align:right">GAIN</span></div>` +
@@ -1194,12 +1240,16 @@
    * cannot be starved.
    */
   let autopickTried = false;
+  let watchTrace = null;
   const autopickTimer = setInterval(() => {
     try {
       if (!CFG.AUTOPICK_AT_SECONDS || complete()) return;
-      if (!myTurn()) { autopickTried = false; return; }   // reset for the next turn
+      if (!myTurn()) { autopickTried = false; watchTrace = null; return; }
       if (autopickTried) return;
       const left = secondsLeft();
+      // Trace once per second while it is our turn: without this, a non-firing
+      // autopick is indistinguishable from a watcher that never ran at all.
+      if (watchTrace !== left) { watchTrace = left; say(`turn: ${left}s left (fire at ${CFG.AUTOPICK_AT_SECONDS})`); }
       if (left === null || left > CFG.AUTOPICK_AT_SECONDS) return;
       autopickTried = true;
       draftQueueTop();

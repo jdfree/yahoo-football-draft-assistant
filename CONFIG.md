@@ -146,6 +146,32 @@ At `0`, byes are ignored. At `1`, a player who would leave a starting slot with
 nobody active that week is worth nothing. At the default `0.5`, the first
 collision at a one-slot position halves his value.
 
+## Replacement horizon
+
+| Parameter | Default |
+| --- | --- |
+| `SKIP_ROUNDS` | `2` |
+
+How many rounds to assume a position goes undrafted if you pass on it now.
+
+Measuring against "what could I get one pick later" understates the cost of
+skipping a position, because you rarely come back to it on your very next pick. At
+the default of 2, replacement level is whatever would survive two full rounds of
+attrition — a harsher and more realistic bar, which raises the value of players at
+positions that thin out quickly.
+
+**Attrition is predicted by ADP, and those exact players are removed.** An earlier
+version counted departures by ADP and then dropped that many from the *top of the
+projection list*, as though the players taken were the highest-projected. They are
+not — by ADP they are the lowest-ADP ones. That inflated replacement level at any
+position holding a projection/ADP outlier (a player projected 237 at ADP rank 135,
+say) and made everyone at that position look less valuable than they were. Each
+signal is now used for what it actually measures: ADP for *who* goes, projection
+for *what they are worth*.
+
+Kickers and defenses are exempt, as always — their replacement is the best one left
+after every other team has taken theirs.
+
 ## Backup depth at RB and WR
 
 | Parameter | Default |

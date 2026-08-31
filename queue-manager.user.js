@@ -86,6 +86,13 @@
     // live draft queued a defense in round two.
     LATE_ONLY: ['K', 'DEF'],
 
+    // --- replacement horizon -------------------------------------------------
+    // How many rounds to assume a position goes undrafted if you pass on it now.
+    // Comparing against "what could I get one pick later" understates the cost of
+    // skipping: you rarely come back to a position on your very next pick. At 2,
+    // replacement level is what would survive two full rounds of attrition.
+    SKIP_ROUNDS: 2,
+
     // --- backup depth at RB/WR ----------------------------------------------
     // Injuries and bye-week holes are needed far more often at running back and
     // receiver than at quarterback or tight end, where one starter usually
@@ -676,11 +683,20 @@
       byPos[pos] = avail.filter((p) => p.pos === pos).sort((a, b) => b.proj - a.proj);
     }
 
-    // Attrition before your next turn, predicted by ADP over the snake gap.
-    const gap = gapTo(rd);
-    const gone = [...avail].sort((a, b) => a.adp - b.adp).slice(0, gap);
-    const attrition = {};
-    gone.forEach((p) => { attrition[p.pos] = (attrition[p.pos] || 0) + 1; });
+    // How many picks pass before we would realistically come back to a position.
+    // Summing gapTo over successive rounds handles the snake: from any pick to the
+    // same slot two rounds later is exactly 2 x TEAMS.
+    let horizon = 0;
+    for (let i = 0; i < Math.max(1, CFG.SKIP_ROUNDS); i++) horizon += gapTo(rd + i);
+
+    // Predict WHO goes by ADP, and drop exactly those players. The previous model
+    // counted departures by ADP and then removed that many from the TOP of the
+    // projection list, as though the players taken were the highest-projected —
+    // they are not. That inflated replacement level at any position holding a
+    // projection/ADP outlier, making everyone there look less valuable than they
+    // were. Each signal is now used for what it actually measures.
+    const goneIds = new Set(
+      [...avail].sort((a, b) => a.adp - b.adp).slice(0, horizon).map((p) => p.id));
 
     /**
      * Replacement level differs by position.
@@ -693,12 +709,14 @@
      * on the board once every other team has taken theirs, i.e. TEAMS-1 deep.
      */
     const replacement = (pos) => {
-      const l = byPos[pos];
+      const l = byPos[pos];                       // sorted by projection, desc
       if (!l.length) return 0;
-      const i = (pos === 'K' || pos === 'DEF')
-        ? Math.min(l.length - 1, CFG.TEAMS - 1)
-        : (attrition[pos] || 0);
-      return (l[i] || l[l.length - 1]).proj;
+      if (pos === 'K' || pos === 'DEF') {
+        return (l[Math.min(l.length - 1, CFG.TEAMS - 1)] || l[l.length - 1]).proj;
+      }
+      // Best projection among those ADP says are still on the board.
+      const survivor = l.find((p) => !goneIds.has(p.id));
+      return (survivor || l[l.length - 1]).proj;
     };
 
     const flexUsed = ['RB', 'WR', 'TE']

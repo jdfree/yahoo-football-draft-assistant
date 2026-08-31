@@ -581,7 +581,9 @@
     if (player.pos === 'K' || player.pos === 'DEF') return 1;
     const teammates = have.filter((h) => h.team && h.team === player.team
       && h.pos !== 'K' && h.pos !== 'DEF').length;
-    return teammates ? 1 - CFG.SAME_TEAM_PENALTY : 1;
+    // Compounds: a third player from the same team is penalised more than the
+    // second. This can push a player below replacement, which is intended.
+    return Math.pow(1 - CFG.SAME_TEAM_PENALTY, teammates);
   }
 
   function byeMultiplier(player, have) {
@@ -765,6 +767,17 @@
       || Object.assign({}, q, { val: null }));
   }
 
+  /**
+   * How many queue slots one position may occupy. Keeping this below the queue
+   * size guarantees the queue always offers a genuine alternative rather than
+   * five variations on the same decision — if a run empties that position, the
+   * rest of the queue is still useful.
+   */
+  const positionLimit = (pos, b2b) => {
+    if (pos === 'K' || pos === 'DEF') return b2b ? 1 : 2;
+    return Math.max(1, CFG.QUEUE_SIZE - 2);
+  };
+
   function planQueue(n) {
     const b2b = backToBack();
     // Players ALREADY queued must count as provisional roster additions. Refilling
@@ -775,24 +788,26 @@
     const chosen = [];
     const sequence = queued.slice();
 
+    // Count what the queue already holds, so limits apply across the whole queue.
+    const posCount = {};
+    for (const p of queued) posCount[p.pos] = (posCount[p.pos] || 0) + 1;
+
     while (chosen.length < n) {
-      const ranked = rankAvailable(sequence).filter((p) => !chosen.some((c) => c.id === p.id));
+      const ranked = rankAvailable(sequence)
+        .filter((p) => !chosen.some((c) => c.id === p.id))
+        .filter((p) => (posCount[p.pos] || 0) < positionLimit(p.pos, b2b));
       if (!ranked.length) break;
       const pick = ranked[0];
       chosen.push(pick);
       sequence.push(pick);
+      posCount[pick.pos] = (posCount[pick.pos] || 0) + 1;
       if (chosen.length === 1 && !queued.length && !b2b && isScarce(pick.pos, roster())) {
         const backup = rankAvailable([]).find((p) => p.pos === pick.pos && p.id !== pick.id);
         if (backup && chosen.length < n) chosen.push(backup);
       }
     }
 
-    const cap = b2b ? 1 : 2;
-    const seen = { K: queued.filter((p) => p.pos === 'K').length,
-                   DEF: queued.filter((p) => p.pos === 'DEF').length };
-    const out = chosen.filter((p) => (p.pos !== 'K' && p.pos !== 'DEF') ? true : (++seen[p.pos] <= cap));
-    if (out.length !== chosen.length) say(`capped K/DEF at ${cap}${b2b ? ' (back to back)' : ''}`);
-    return out;
+    return chosen;
   }
 
   // ---------------------------------------------------------------------------
@@ -925,15 +940,21 @@
       if (picksLeft > 0 && missing.length >= picksLeft) {
         const needed = new Set(missing);
         const view = queueView();
-        const wrong = view.filter((p) => !needed.has(p.pos));
-        if (wrong.length) {
-          say(`must-fill ${[...needed].join('/')} with ${picksLeft} picks left — ` +
-              `clearing ${wrong.length} other entries from the queue`);
-          const names = new Set(wrong.map((p) => `${p.name}|${p.pos}`));
-          await removeFromQueue((pl) => names.has(`${pl.name}|${pl.pos}`));
-          await clearFilters();
-        }
+    const b2b = backToBack();
+    const seen = {};
+    const bad = new Set();
+
+    for (const p of view) {
+      const rostered = have.filter((h) => h.pos === p.pos).length;
+      // Once a K or DEF is rostered we will essentially never want another.
+      if ((p.pos === 'K' || p.pos === 'DEF') && rostered >= (CFG.CAPS[p.pos] || 1)) {
+        bad.add(`${p.name}|${p.pos}`); continue;
       }
+      if (p.val === null) { bad.add(`${p.name}|${p.pos}`); continue; }
+      // No position may occupy more than QUEUE_SIZE-2 slots, so the queue always
+      // holds a real alternative rather than variations on one decision.
+      seen[p.pos] = (seen[p.pos] || 0) + 1;
+      if (seen[p.pos] > positionLimit(p.pos, b2b)) bad.add(`${p.name}|${p.pos}`);
     }
 
     const cap = backToBack() ? 1 : 2;

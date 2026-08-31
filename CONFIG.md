@@ -155,9 +155,10 @@ It is applied to the projection rather than the final value, so it flows through
 the value-over-replacement maths exactly as a genuinely lower-projected player
 would — it can move a player below replacement, not merely down the order.
 
-The reduction is flat: holding one teammate and holding three produce the same
-penalty. If you would rather it compound per teammate, that is a one-line change
-in `sameTeamMultiplier`.
+The reduction **compounds** per teammate: with `0.10`, a second player from a team
+you own projects at 90%, a third at 81%. It can push a player below replacement,
+which is intended — the point is to express a real preference, not merely to break
+ties.
 
 **It does not apply to kickers or defenses.** A defense's output is not diminished
 by owning that team's running back, and the stacking concerns the penalty exists to
@@ -234,6 +235,12 @@ When you draft, the roster changes and every queued player was chosen against
 needs that no longer hold. The manager purges the whole queue and rebuilds it.
 
 ## Queue composition
+
+**No position may occupy more than `QUEUE_SIZE − 2` slots.** At the default queue
+size of five, that is three. The queue exists to survive a run at a position, and
+five variations on the same decision offer no protection at all — if that position
+gets emptied, the whole queue is dead. Kickers and defenses are capped tighter
+still (two, or one when picks are back to back).
 
 The queue is a **sequence**, not a ranked list. Yahoo consumes it top-down, so each
 entry is scored as if the ones above it were already drafted. That alone prevents

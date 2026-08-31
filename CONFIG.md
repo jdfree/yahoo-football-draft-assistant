@@ -1,0 +1,154 @@
+# Configuration
+
+Every knob lives in the `CFG` block at the top of `queue-manager.user.js`, except
+the playoff schedule data, which is precomputed by `fetch-team-context.js`.
+
+## Quick start
+
+```bash
+# 1. Precompute team strength and playoff schedule difficulty
+node fetch-team-context.js --playoffs 15,16,17 --swing 0.10
+
+# 2. Paste team-context.gen.js into Tampermonkey ABOVE the userscript
+#    (or add it as an @require). Without it the playoff modifier is 1.0.
+
+# 3. Set CFG.SLOT and CFG.TEAMS, leave DRY_RUN true, run a mock, read the log.
+```
+
+`window.__queueDump()` in the draft room returns the entire state the valuation
+was built from — config, pool, roster, picks seen, and the top 25 with every
+component of their score broken out. It is also mirrored to
+`localStorage.ys_dump` on each tick, so a run can be audited afterwards rather
+than taken on trust.
+
+---
+
+## Draft shape
+
+| Parameter | Default | Notes |
+| --- | --- | --- |
+| `TEAMS` | `12` | League size. With `SLOT`, sets the snake gap that drives replacement level. |
+| `SLOT` | `1` | **Your actual draft position.** Yahoo reassigns it silently — a requested slot 3 came back as 9 and as 12 on two of four attempts. Read it off the waiting room. |
+| `STARTERS` | `{QB:1,RB:2,WR:2,TE:1,K:1,DEF:1}` | Starting slots, excluding flex. |
+| `FLEX` | `1` | W/R/T slots. |
+| `CAPS` | `{QB:2,RB:6,WR:7,TE:3,K:1,DEF:1}` | Hard ceiling per position. |
+| `POOL` | 75 QB, 75 TE, 300 W/R/T, all K, all DEF | Read once at draft start. |
+| `TICK_MS` | `2000` | How often to check the queue. |
+
+## 1. Queue size
+
+| Parameter | Default |
+| --- | --- |
+| `QUEUE_SIZE` | `5` |
+
+How many players to keep queued. The manager refills whenever the badge drops
+below this, which happens exactly when one of your queued players is drafted by
+anyone.
+
+Larger is safer against a run at a position but goes further down your board, so
+the tail of a long queue is worth less. Above roughly ten you are queueing players
+you would not actually want.
+
+## 2. Starters versus reserves
+
+| Parameter | Default |
+| --- | --- |
+| `WEIGHT_STARTER` | `1.0` |
+| `WEIGHT_FLEX` | `0.9` |
+| `WEIGHT_RESERVE` | `0.2` |
+
+A player's value is scaled by the role he would fill. What matters is the *ratio*,
+not the absolute numbers.
+
+- **Lower `WEIGHT_RESERVE`** (say `0.1`) to prioritise plugging empty starting
+  slots, even with a mediocre player.
+- **Raise it** (say `0.4`) to keep taking the best player available at a contested
+  position and let the empty slot wait.
+
+At the default `0.2`, a bench player must be worth five times as much over
+replacement as a starter-slot filler before the manager prefers him. Setting it to
+`1.0` disables role weighting entirely and drafts pure best-available.
+
+## 3. Fantasy playoffs
+
+| Parameter | Default | Where |
+| --- | --- | --- |
+| `PLAYOFF_WEEKS` | `[15,16,17]` | both |
+| `PLAYOFF_SWING` | `0.10` | both |
+
+Set the weeks your league's playoffs actually run, then regenerate:
+
+```bash
+node fetch-team-context.js --playoffs 14,15,16 --swing 0.15
+```
+
+**Difficulty metric.** For each playoff week, a player's difficulty is his
+opponent's defensive EPA minus that opponent's offensive EPA:
+
+```
+difficulty = opponent.epaDefense − opponent.epaOffense      (higher = worse)
+```
+
+Both ESPN components are signed so higher is better for the team they belong to
+(verified: they correlate +0.94 and +0.73 with that team's own FPI). So a strong
+opposing defense raises difficulty, and a strong opposing *offense* lowers it — a
+good opposing offense means a competitive, high-possession game, which is good for
+your player's volume. The ideal fantasy matchup is a weak defense attached to a
+strong offense.
+
+This has a consequence worth understanding before you trust the output: facing a
+strong all-round team like Buffalo can score as an *easy* fantasy matchup, because
+their offense forces a shootout. That is the metric behaving as designed, not a bug.
+
+A bye during a playoff week is scored as the worst difficulty observed anywhere in
+the league — the player is simply unavailable.
+
+**Swing.** `PLAYOFF_SWING` is the *total* spread between the easiest and hardest
+schedule in the league. At the default `0.10`, two otherwise identical players
+differ by 10% — the easiest slate gets ×1.05, the hardest ×0.95, everyone else
+scaled linearly between. Smaller disparities produce proportionally smaller
+adjustments. Set `0` to ignore schedule entirely.
+
+If `team-context.gen.js` was generated with a different swing than `CFG`, the
+userscript rescales rather than silently using the wrong one.
+
+## 4. Bye weeks
+
+| Parameter | Default |
+| --- | --- |
+| `BYE_FACTOR` | `0.5` |
+
+Range 0 to 1. Penalises a player whose bye week collides with players you already
+hold at the same position:
+
+```
+clash      = players you hold at this position sharing this bye week
+multiplier = 1 − BYE_FACTOR × min(1, clash / starting slots at that position)
+```
+
+At `0`, byes are ignored. At `1`, a player who would leave a starting slot with
+nobody active that week is worth nothing. At the default `0.5`, the first
+collision at a one-slot position halves his value.
+
+## Kickers and defenses
+
+These are not valued like everyone else, and the difference is deliberate.
+
+For skill positions, replacement level is *what you could still get at your next
+turn* — the relevant question is whether to take this player now or wait one
+round. For kickers and defenses that framing is wrong, because nobody drafts a
+second one. The real choice is **take one now, or take one in the final round**;
+there is no meaningful middle.
+
+So their replacement level is the best one still on the board after every other
+team has taken theirs — `TEAMS − 1` deep in the position list. What the manager
+scores is the genuine surplus of spending a pick now rather than waiting until the
+end, which is usually close to zero, which is why they correctly stay out of the
+queue until late.
+
+## Must-fill override
+
+When the number of unfilled required positions equals the number of picks you have
+left, the manager queues only those positions. Permitting a defense late is not
+the same as requiring one — an earlier version ended a draft with zero defenses
+because the fallback preferred a tight end.

@@ -23,16 +23,29 @@ Node 18+, no dependencies. Reads:
   defensive / special-teams EPA
 - [ESPN schedule grid](https://www.espn.com/nfl/schedulegrid) — all 18 weeks
 
-and writes per team: FPI and rank, EPA splits, bye week, the full schedule, and
-strength of schedule for both the full season and the fantasy playoff weeks
-(mean opponent FPI; rank 1 = easiest).
+and writes per team: FPI and rank, EPA splits, bye week, the full schedule,
+season strength of schedule, and **fantasy-playoff schedule difficulty** with the
+multiplier the queue manager applies.
+
+Playoff difficulty is `opponent defensive EPA − opponent offensive EPA`, averaged
+over your playoff weeks. A strong opposing defense hurts; a strong opposing
+*offense* helps, because it forces a competitive, high-possession game. So facing
+a good all-round team can grade as an easy fantasy matchup — that is the metric
+working, not a bug.
 
 ```
-Rank Team  FPI    Bye  SoS(season)  SoS(playoffs)
-  1 LAR    5.6   11     0.81 (#31)      1.83 (#26)
-  2 BUF      4    7    -0.08 (#12)      -1.1 (#10)
-  3 BAL    3.7   13     -0.61 (#5)       -1.6 (#6)
+  # Team   FPI  Bye  Diffcty  Modifier  Opponents
+  -- easiest --
+  1 CHI    1.2   10  -3.167    1.0500   @BUF GB DET
+  2 MIA   -5.8    6      -2    1.0280   @GB LAC BUF
+  -- hardest --
+ 31 LV    -4.6   13     1.6    0.9601   DEN TEN @ARI
+ 32 ARI   -5.2   14   2.133    0.9500   NYJ @NO LV
 ```
+
+It also emits `team-context.gen.js`, a compact `window.YS_TEAM_CONTEXT` for the
+userscript to read — the browser cannot open a local JSON file, so paste that
+alongside the userscript in Tampermonkey.
 
 This is static preseason data with no dependency on a draft room, so run it
 whenever — ideally the morning of, since FPI moves through the preseason.
@@ -54,6 +67,8 @@ hands the draft back to you — the queue is the safety net, because Yahoo draft
 the top of your queue if your clock expires.
 
 Set `CFG.SLOT` and `CFG.TEAMS`, leave `DRY_RUN: true` for a full mock, then go live.
+All parameters — queue size, starter/reserve weighting, playoff weeks and bias, and
+the bye-week factor — are documented in [CONFIG.md](CONFIG.md).
 
 How it works:
 

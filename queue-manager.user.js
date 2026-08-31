@@ -27,15 +27,41 @@
 
   const CFG = {
     DRY_RUN: true,        // log intentions without touching the queue
-    QUEUE_TARGET: 5,
-    TICK_MS: 2000,
+
+    // --- draft shape -------------------------------------------------------
     TEAMS: 12,
     SLOT: 1,              // <-- your ACTUAL slot; the waiting room can reassign it
+    TICK_MS: 2000,
     STARTERS: { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, DEF: 1 },
-    FLEX: 1,
+    FLEX: 1,              // W/R/T slots
     CAPS: { QB: 2, RB: 6, WR: 7, TE: 3, K: 1, DEF: 1 },
-    LATE_ONLY: ['K', 'DEF'],   // keep these out of the queue until the end
     POOL: [['QB', 75], ['TE', 75], ['W/R/T', 300], ['K', 999], ['DEF', 999]],
+
+    // --- 1. queue size -----------------------------------------------------
+    QUEUE_SIZE: 5,
+
+    // --- 2. starters vs reserves -------------------------------------------
+    // How much a player is worth by the role he would fill. Raising RESERVE
+    // relative to STARTER buys the best remaining player at a contested position
+    // instead of plugging an empty starting slot with someone mediocre.
+    WEIGHT_STARTER: 1.0,
+    WEIGHT_FLEX: 0.9,
+    WEIGHT_RESERVE: 0.2,
+
+    // --- 3. fantasy playoffs ------------------------------------------------
+    // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff
+    // schedule in the league. At 0.10, two otherwise identical players differ by
+    // 10%; teams in between scale linearly. Set 0 to ignore schedule entirely.
+    // Per-team modifiers come from window.YS_TEAM_CONTEXT (team-context.gen.js).
+    // Regenerate that file with matching weeks:
+    //   node fetch-team-context.js --playoffs 15,16,17 --swing 0.10
+    PLAYOFF_WEEKS: [15, 16, 17],
+    PLAYOFF_SWING: 0.10,
+
+    // --- 4. bye weeks -------------------------------------------------------
+    // 0 ignores byes entirely. 1 means a player whose bye would leave a starting
+    // slot empty is worth nothing. Scales with how badly the bye collides.
+    BYE_FACTOR: 0.5,
   };
 
   const LOG = [];
@@ -105,8 +131,8 @@
       const t = x.innerText.replace(/\s+/g, ' ').trim();
       // Position is the token before team+Bye. A bare \bK\b matches the INITIAL
       // in "K. Walker III". Defenses render as "Lions DEF Bye 6" — no initial.
-      const m = t.match(/\b(QB|RB|WR|TE|K|DEF)\b\s+(?:[A-Za-z]{2,3}\s+)?Bye/);
-      return m ? { name: t.split(/\s{2,}|\n/)[0], pos: m[1] } : null;
+      const m = t.match(/\b(QB|RB|WR|TE|K|DEF)\b\s+(?:[A-Za-z]{2,3}\s+)?Bye\s*(\d+)?/);
+      return m ? { name: t.split(/\s{2,}|\n/)[0], pos: m[1], bye: m[2] ? +m[2] : null } : null;
     }).filter(Boolean);
   }
   function rosterSize() {
@@ -205,6 +231,29 @@
     return m ? +m[1] : 1;
   };
 
+  /** Per-team playoff modifier from team-context.gen.js; 1.0 when absent. */
+  function playoffModifier(team) {
+    const ctx = window.YS_TEAM_CONTEXT;
+    if (!ctx || !CFG.PLAYOFF_SWING) return 1;
+    const m = ctx.teams?.[(team || '').toUpperCase()]?.mod;
+    if (!Number.isFinite(m)) return 1;
+    // Rescale if the generated file used a different swing than configured here.
+    return ctx.swing === CFG.PLAYOFF_SWING ? m
+      : 1 + (m - 1) * (CFG.PLAYOFF_SWING / (ctx.swing || CFG.PLAYOFF_SWING));
+  }
+
+  /**
+   * Bye penalty. Counts how many players you already hold at this position who
+   * share this bye week. Once that reaches the number of starting slots at the
+   * position, adding another means a week with nobody to start there.
+   */
+  function byeMultiplier(player, have) {
+    if (!CFG.BYE_FACTOR || !player.bye) return 1;
+    const clash = have.filter((h) => h.pos === player.pos && h.bye === player.bye).length;
+    const slots = Math.max(1, CFG.STARTERS[player.pos] || 1);
+    return 1 - CFG.BYE_FACTOR * Math.min(1, clash / slots);
+  }
+
   function rankAvailable() {
     const have = roster();
     const size = rosterSize();
@@ -217,41 +266,69 @@
       .filter((p) => !mine.has(key(p.name, p.pos)))
       .filter((p) => !state.queued.includes(p.id));
 
-    // Required positions we can no longer defer.
+    // A required position we can no longer defer overrides everything.
     const missing = Object.entries(CFG.STARTERS)
       .flatMap(([p, k]) => Array(Math.max(0, k - count(p))).fill(p));
     const picksLeft = size - have.length;
-    const forced = missing.length >= picksLeft && picksLeft > 0 ? missing[0] : null;
-    if (forced) {
-      return avail.filter((p) => p.pos === forced).sort((a, b) => b.proj - a.proj);
+    if (missing.length >= picksLeft && picksLeft > 0) {
+      return avail.filter((p) => p.pos === missing[0])
+        .sort((a, b) => b.proj - a.proj)
+        .map((p) => ({ ...p, val: Infinity, why: `must-fill ${missing[0]}` }));
     }
 
-    const legal = (p) => {
-      if (count(p.pos) >= CFG.CAPS[p.pos]) return false;
-      if (CFG.LATE_ONLY.includes(p.pos) && rd < size - 1) return false;
-      return true;
-    };
+    const byPos = {};
+    for (const pos of ['QB', 'RB', 'WR', 'TE', 'K', 'DEF']) {
+      byPos[pos] = avail.filter((p) => p.pos === pos).sort((a, b) => b.proj - a.proj);
+    }
 
+    // Attrition before your next turn, predicted by ADP over the snake gap.
     const gap = gapTo(rd);
     const gone = [...avail].sort((a, b) => a.adp - b.adp).slice(0, gap);
     const attrition = {};
     gone.forEach((p) => { attrition[p.pos] = (attrition[p.pos] || 0) + 1; });
-    const nextBest = {};
-    for (const pos of ['QB', 'RB', 'WR', 'TE', 'K', 'DEF']) {
-      const l = avail.filter((p) => p.pos === pos).sort((a, b) => b.proj - a.proj);
-      const i = attrition[pos] || 0;
-      nextBest[pos] = l[i] ? l[i].proj : (l.length ? l[l.length - 1].proj : 0);
-    }
+
+    /**
+     * Replacement level differs by position.
+     *
+     * Skill positions: what you could still get at your NEXT turn.
+     *
+     * Kickers and defenses: NOT the next turn. Nobody drafts a second kicker, so
+     * the real choice is "take one now" versus "take one in the final round" —
+     * there is no meaningful middle. Replacement is therefore the best one still
+     * on the board once every other team has taken theirs, i.e. TEAMS-1 deep.
+     */
+    const replacement = (pos) => {
+      const l = byPos[pos];
+      if (!l.length) return 0;
+      const i = (pos === 'K' || pos === 'DEF')
+        ? Math.min(l.length - 1, CFG.TEAMS - 1)
+        : (attrition[pos] || 0);
+      return (l[i] || l[l.length - 1]).proj;
+    };
+
     const flexUsed = ['RB', 'WR', 'TE']
       .reduce((n, p) => n + Math.max(0, count(p) - CFG.STARTERS[p]), 0);
 
-    return avail.filter(legal).map((p) => {
-      const raw = p.proj - nextBest[p.pos];
-      let mult = 1;
+    return avail.filter((p) => count(p.pos) < CFG.CAPS[p.pos]).map((p) => {
+      const raw = p.proj - replacement(p.pos);
+
+      let weight = CFG.WEIGHT_STARTER, role = 'starter';
       if (count(p.pos) >= CFG.STARTERS[p.pos]) {
-        mult = (['RB', 'WR', 'TE'].includes(p.pos) && flexUsed < CFG.FLEX) ? 0.9 : 0.2;
+        if (['RB', 'WR', 'TE'].includes(p.pos) && flexUsed < CFG.FLEX) {
+          weight = CFG.WEIGHT_FLEX; role = 'flex';
+        } else {
+          weight = CFG.WEIGHT_RESERVE; role = 'reserve';
+        }
       }
-      return { ...p, val: +(raw * mult).toFixed(2) };
+
+      const pm = playoffModifier(p.team);
+      const bm = byeMultiplier(p, have);
+      const val = raw * weight * pm * bm;
+
+      return { ...p, raw: +raw.toFixed(2), val: +val.toFixed(2), role,
+               playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3),
+               why: `${p.proj} - repl ${(p.proj - raw).toFixed(1)} = ${raw.toFixed(1)}` +
+                    ` x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` };
     }).sort((a, b) => b.val - a.val);
   }
 
@@ -309,11 +386,11 @@
   }
 
   async function refill() {
-    const need = CFG.QUEUE_TARGET - queueCount();
+    const need = CFG.QUEUE_SIZE - queueCount();
     if (need <= 0) return;
     const ranked = rankAvailable();
     if (!ranked.length) return;
-    say(`queue at ${queueCount()}/${CFG.QUEUE_TARGET}, adding ${need}`);
+    say(`queue at ${queueCount()}/${CFG.QUEUE_SIZE}, adding ${need}`);
     for (const p of ranked.slice(0, need)) {
       if (myTurn()) { say('your turn started — stopping mid-refill'); return; }
       const ok = await enqueue(p);
@@ -390,7 +467,8 @@
       // queue already holds the fallback if your clock runs out.
       if (myTurn()) return;
 
-      if (queueCount() < CFG.QUEUE_TARGET) await refill();
+      if (queueCount() < CFG.QUEUE_SIZE) await refill();
+      try { localStorage.setItem('ys_dump', JSON.stringify(window.__queueDump())); } catch (e) {}
     } catch (e) {
       say(`ERROR ${e.message}`);
     } finally {
@@ -398,8 +476,37 @@
     }
   }
 
+  /**
+   * Everything the valuation is built on, in one object, so a run can be audited
+   * after the fact rather than trusted. Also mirrored to localStorage each tick.
+   */
+  window.__queueDump = () => {
+    const ranked = state.armed ? rankAvailable() : [];
+    return {
+      generatedAt: new Date().toISOString(),
+      config: CFG,
+      teamContextLoaded: !!window.YS_TEAM_CONTEXT,
+      round: roundNow(),
+      queueCount: queueCount(),
+      myTurn: myTurn(),
+      roster: roster(),
+      rosterSize: rosterSize(),
+      poolSize: state.pool.size,
+      poolByPos: [...state.pool.values()].reduce((a, p) => (a[p.pos] = (a[p.pos] || 0) + 1, a), {}),
+      takenCount: state.taken.size,
+      picksSeen: [...state.seenPicks].sort((a, b) => a - b),
+      queuedIds: state.queued,
+      top25: ranked.slice(0, 25).map((p) => ({
+        name: p.name, pos: p.pos, team: p.team, bye: p.bye, proj: p.proj, adp: p.adp,
+        raw: p.raw, val: p.val, role: p.role, playoffMod: p.playoffMod, byeMod: p.byeMod,
+      })),
+      pool: [...state.pool.values()].map(({ row, ...p }) => p),
+      log: LOG,
+    };
+  };
+
   const timer = setInterval(tick, CFG.TICK_MS);
   window.__queueStop = () => { clearInterval(timer); say('stopped'); };
   window.__queueState = state;
-  say(`armed — ${CFG.DRY_RUN ? 'DRY RUN' : 'LIVE'}, target ${CFG.QUEUE_TARGET}, slot ${CFG.SLOT}`);
+  say(`armed — ${CFG.DRY_RUN ? 'DRY RUN' : 'LIVE'}, target ${CFG.QUEUE_SIZE}, slot ${CFG.SLOT}`);
 })();

@@ -4,6 +4,7 @@
  * and derives the strength-of-schedule numbers that matter for drafting.
  *
  *   node fetch-team-context.js [--out team-context.json]
+ *                              [--playoffs 15,16,17] [--swing 0.10]
  *
  * Run this any time before the draft — it is static preseason data and has no
  * dependency on a draft room being open. No npm packages; Node 18+ only.
@@ -90,34 +91,92 @@ function parseSchedule(html) {
 }
 
 /**
- * Strength of schedule as mean opponent FPI. Higher = harder.
- * Fantasy playoffs default to weeks 15-17; override with --playoffs 15,16,17.
+ * Schedule difficulty for a single game, from the perspective of a fantasy player
+ * on `team` facing `opp`.
+ *
+ *   difficulty = opponent defensive EPA - opponent offensive EPA
+ *
+ * Both ESPN EPA components are signed so that higher is better for the team they
+ * belong to (verified: they correlate +0.94 and +0.73 with that team's FPI). So a
+ * strong opposing defense raises difficulty, and a strong opposing offense LOWERS
+ * it — a good opposing offense means a competitive game, more possessions, and
+ * more garbage-time volume. The ideal fantasy matchup is a weak defense attached
+ * to a strong offense.
  */
-function derive(teams, schedule, playoffWeeks) {
+const gameDifficulty = (opp) => opp.epaDefense - opp.epaOffense;
+
+/**
+ * Aggregate difficulty across the fantasy playoff weeks, then convert to a
+ * multiplier. `swing` is the TOTAL spread between the easiest and hardest
+ * schedule in the league: at the default 0.10, two otherwise identical players
+ * differ by 10% if one faces the easiest playoff slate and the other the hardest.
+ * Teams in between scale linearly, so smaller disparities move the number less.
+ */
+function derivePlayoffs(teams, playoffWeeks, swing) {
+  // Pass 1: per-week difficulty, so a bye can be scored as the worst case rather
+  // than as a missing value. A bye during your fantasy playoffs is the worst
+  // possible schedule — the player simply is not available.
+  const all = [];
+  for (const t of Object.values(teams)) {
+    for (const w of playoffWeeks) {
+      const g = t.schedule.find((x) => x.week === w);
+      if (g && !g.bye && teams[g.opponent]) all.push(gameDifficulty(teams[g.opponent]));
+    }
+  }
+  const worst = all.length ? Math.max(...all) : 0;
+
+  for (const t of Object.values(teams)) {
+    const vals = [];
+    let byes = 0;
+    for (const w of playoffWeeks) {
+      const g = t.schedule.find((x) => x.week === w);
+      if (!g) continue;
+      if (g.bye) { vals.push(worst); byes++; continue; }
+      const o = teams[g.opponent];
+      if (o) vals.push(gameDifficulty(o));
+    }
+    t.playoffByeWeeks = byes;
+    t.playoffDifficulty = vals.length
+      ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 1000) / 1000
+      : null;
+    t.playoffOpponents = playoffWeeks.map((w) => {
+      const g = t.schedule.find((x) => x.week === w);
+      if (!g) return null;
+      return g.bye ? { week: w, bye: true }
+                   : { week: w, opponent: g.opponent, home: g.home,
+                       difficulty: Math.round(gameDifficulty(teams[g.opponent] || {}) * 1000) / 1000 };
+    }).filter(Boolean);
+  }
+
+  const ds = Object.values(teams).map((t) => t.playoffDifficulty).filter(Number.isFinite);
+  const lo = Math.min(...ds), hi = Math.max(...ds);
+  for (const t of Object.values(teams)) {
+    // 0 = easiest slate in the league, 1 = hardest.
+    const n = (hi > lo && Number.isFinite(t.playoffDifficulty))
+      ? (t.playoffDifficulty - lo) / (hi - lo) : 0.5;
+    t.playoffEase = Math.round((1 - n) * 1000) / 1000;
+    t.playoffModifier = Math.round((1 + swing * (0.5 - n)) * 10000) / 10000;
+  }
+  Object.values(teams).filter((t) => Number.isFinite(t.playoffDifficulty))
+    .sort((a, b) => a.playoffDifficulty - b.playoffDifficulty)
+    .forEach((t, i) => { t.playoffEaseRank = i + 1; });   // 1 = easiest
+}
+
+/** Season-long strength of schedule, kept as mean opponent FPI. Higher = harder. */
+function deriveSeason(teams, schedule) {
   const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
   const r2 = (v) => (v === null ? null : Math.round(v * 100) / 100);
-
   for (const [abbr, games] of Object.entries(schedule)) {
     const t = teams[abbr];
     if (!t) continue;
-    const oppFpi = (gs) => gs.filter((g) => !g.bye)
-      .map((g) => teams[g.opponent]?.fpi).filter((v) => Number.isFinite(v));
-
     t.byeWeek = games.find((g) => g.bye)?.week ?? null;
-    t.sosSeason = r2(mean(oppFpi(games)));
-    t.sosPlayoffs = r2(mean(oppFpi(games.filter((g) => playoffWeeks.includes(g.week)))));
     t.schedule = games;
+    t.sosSeason = r2(mean(games.filter((g) => !g.bye)
+      .map((g) => teams[g.opponent]?.fpi).filter(Number.isFinite)));
   }
-
-  // Rank 1 = easiest schedule, so a high-FPI team faces weak opponents.
-  const ranked = Object.values(teams).filter((t) => t.sosSeason !== null)
-    .sort((a, b) => a.sosSeason - b.sosSeason);
-  ranked.forEach((t, i) => { t.sosSeasonRank = i + 1; });
-  const rankedPo = Object.values(teams).filter((t) => t.sosPlayoffs !== null)
-    .sort((a, b) => a.sosPlayoffs - b.sosPlayoffs);
-  rankedPo.forEach((t, i) => { t.sosPlayoffsRank = i + 1; });
-
-  return teams;
+  Object.values(teams).filter((t) => t.sosSeason !== null)
+    .sort((a, b) => a.sosSeason - b.sosSeason)
+    .forEach((t, i) => { t.sosSeasonRank = i + 1; });
 }
 
 /**
@@ -156,6 +215,7 @@ async function main() {
   const arg = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : d; };
   const out = arg('--out', 'team-context.json');
   const playoffWeeks = arg('--playoffs', '15,16,17').split(',').map(Number);
+  const swing = parseFloat(arg('--swing', '0.10'));
 
   const [fpiHtml, gridHtml] = await Promise.all([get(FPI_URL), get(GRID_URL)]);
   const teams = parseFPI(fpiHtml);
@@ -171,29 +231,47 @@ async function main() {
                     `  in grid only: ${extra.join(', ') || 'none'}`);
   }
 
-  derive(teams, schedule, playoffWeeks);
+  deriveSeason(teams, schedule);
   const games = validate(teams);
+  derivePlayoffs(teams, playoffWeeks, swing);
 
   const payload = {
     fetchedAt: new Date().toISOString(),
     sources: { fpi: FPI_URL, schedule: GRID_URL },
-    playoffWeeks,
+    playoffWeeks, swing,
     teams,
   };
-  await require('fs').promises.writeFile(out, JSON.stringify(payload, null, 2));
+  const fs = require('fs').promises;
+  await fs.writeFile(out, JSON.stringify(payload, null, 2));
+
+  // Compact companion for the browser. The queue manager runs inside the draft
+  // page and cannot read a local file, so paste this into Tampermonkey above the
+  // userscript (or @require it). Without it the playoff modifier is simply 1.
+  const compact = Object.fromEntries(Object.values(teams).map((t) => [t.abbrev, {
+    bye: t.byeWeek, mod: t.playoffModifier, diff: t.playoffDifficulty,
+    ease: t.playoffEaseRank, fpi: t.fpi,
+  }]));
+  await fs.writeFile(out.replace(/\.json$/, '') + '.gen.js',
+    `// generated by fetch-team-context.js — playoff weeks ${playoffWeeks.join('/')}, swing ${swing}\n` +
+    `window.YS_TEAM_CONTEXT = ${JSON.stringify({ playoffWeeks, swing, teams: compact })};\n`);
 
   const list = Object.values(teams).sort((a, b) => a.fpiRank - b.fpiRank);
   console.log(`Wrote ${out} — ${list.length} teams, ${games} games validated, ` +
               `weeks ${playoffWeeks.join('/')} as fantasy playoffs\n`);
-  console.log('Rank Team  FPI    Bye  SoS(season)  SoS(playoffs)');
-  for (const t of list.slice(0, 10)) {
-    console.log(
-      String(t.fpiRank).padStart(3), t.abbrev.padEnd(4),
-      String(t.fpi).padStart(5), String(t.byeWeek ?? '-').padStart(4),
-      `${String(t.sosSeason).padStart(7)} (#${t.sosSeasonRank})`.padStart(14),
-      `${String(t.sosPlayoffs).padStart(6)} (#${t.sosPlayoffsRank})`.padStart(15));
-  }
-  console.log('  … full table in ' + out);
+  const byEase = Object.values(teams).sort((a, b) => a.playoffEaseRank - b.playoffEaseRank);
+  const line = (t) => [
+    String(t.playoffEaseRank).padStart(3), t.abbrev.padEnd(4),
+    String(t.fpi).padStart(5), String(t.byeWeek ?? '-').padStart(4),
+    String(t.playoffDifficulty).padStart(7), String(t.playoffModifier.toFixed(4)).padStart(9),
+    '  ' + t.playoffOpponents.map((o) => o.bye ? `w${o.week}:BYE` : `${o.home ? '' : '@'}${o.opponent}`).join(' '),
+  ].join(' ');
+  console.log(`Playoff schedule, weeks ${playoffWeeks.join('/')} (difficulty = opp DEF EPA - opp OFF EPA; lower is better)\n`);
+  console.log('  # Team   FPI  Bye  Diffcty  Modifier  Opponents');
+  console.log('  -- easiest --');
+  byEase.slice(0, 5).forEach((t) => console.log(line(t)));
+  console.log('  -- hardest --');
+  byEase.slice(-5).forEach((t) => console.log(line(t)));
+  console.log(`\n  full table in ${out}; browser copy in ${out.replace(/\.json$/, '')}.gen.js`);
 }
 
 main().catch((e) => { console.error('FAILED:', e.message); process.exit(1); });

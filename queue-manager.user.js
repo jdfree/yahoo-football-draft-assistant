@@ -277,9 +277,25 @@
   }
 
   /** Seconds left on the clock, from the mm:ss in the draft header. */
+  /**
+   * The pick clock, read from the element that contains ONLY a mm:ss string.
+   * Scanning body text for the first /\d+:\d\d/ matched kickoff times like
+   * "Sun 11:00 am" instead, so the countdown never appeared to reach zero and the
+   * last-second autopick never fired.
+   */
   function secondsLeft() {
-    const m = document.body.innerText.match(/\b(\d{1,2}):(\d{2})\b/);
-    return m ? (+m[1]) * 60 + (+m[2]) : null;
+    let best = null;
+    for (const el of document.querySelectorAll('div,span,p,h1,h2,h3')) {
+      if (el.children.length) continue;                 // leaf nodes only
+      const t = (el.textContent || '').trim();
+      const m = /^(\d{1,2}):(\d{2})$/.exec(t);         // the WHOLE text, not a substring
+      if (!m) continue;
+      const secs = (+m[1]) * 60 + (+m[2]);
+      if (secs > 20 * 60) continue;                     // a pick clock, not a date
+      const top = el.getBoundingClientRect().top;
+      if (best === null || top < best.top) best = { secs, top };
+    }
+    return best ? best.secs : null;
   }
 
   /**
@@ -351,6 +367,10 @@
     return !!(b && b.querySelector('svg[data-icon="checkmark-default"]'));
   }
 
+  // The MutationObserver fires many times per second, and the autodraft toggle
+  // takes a moment to re-render. Without a cooldown we clicked it repeatedly and
+  // risked toggling it straight back ON.
+  let lastToggle = 0;
   function ensureLiveDrafting() {
     let acted = false;
 
@@ -364,10 +384,13 @@
     // to read, so detect it by whether the button has a solid background.
     const tog = [...document.querySelectorAll('button')]
       .find((b) => /^Autodraft$/i.test((b.innerText || '').trim()));
-    if (tog) {
+    if (tog && Date.now() - lastToggle > 3000) {
       const bg = getComputedStyle(tog).backgroundColor;
       const solid = bg && !/rgba?\(0, 0, 0, 0\)|transparent|rgb\(255, 255, 255\)/i.test(bg);
-      if (solid) { tog.click(); say('autodraft was on — switched off'); acted = true; }
+      if (solid && Date.now() - lastToggle > 3000) {
+        lastToggle = Date.now();
+        tog.click(); say('autodraft was on — switched off'); acted = true;
+      }
     }
     return acted;
   }
@@ -653,7 +676,17 @@
         const after = queueCount();
         ok = want ? after > before : after < before;   // trust the badge, not the click
       }
-    } else say(`row not found: ${player.name}`);
+    } else {
+      // No row even after searching means the player is gone from the board —
+      // drafted while our pick tracking had a gap. Mark them unavailable so the
+      // ranking stops offering them; otherwise the refill retries the same three
+      // names every tick and the queue never fills.
+      if (want) {
+        state.taken.add(key(player.name, player.pos));
+        say(`${player.name} has no row — treating as drafted`);
+      }
+    }
+
     if (usedSearch) { setSearch(prev); await sleep(500); }
     return ok;
   }

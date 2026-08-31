@@ -291,13 +291,19 @@ pick.
 | Parameter | Default |
 | --- | --- |
 | `SHOW_OVERLAY` | `false` |
-| `OVERLAY_CORNER` | `'bottom-right'` |
+| `OVERLAY_CORNER` | `'bottom-right'` (vertical placement only) |
+| `OVERLAY_RIGHT_OFFSET` | `330` (fallback only) |
 | `OVERLAY_ROWS` | `6` |
 
 A read-only panel showing the live ranking, each player's score decomposition, and
 the health of the tracker — pool size, picks recorded, and whether autodraft is
 currently off. Two of the silent failures found during development would have been
 visible immediately on that last line instead of only in a dump afterwards.
+
+It sits **just left of your roster column**, overlapping the bottom-right of the
+player table rather than hiding your team. The roster panel's left edge is measured
+at render time so this adapts to window width; `OVERLAY_RIGHT_OFFSET` is used only
+when that measurement fails.
 
 It is a `position: fixed` div appended to `document.body`, so it is a sibling of
 Yahoo's tree and never perturbs it. It sets **`pointer-events: none`**, which makes

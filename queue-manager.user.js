@@ -64,7 +64,10 @@
     // Read-only panel showing the live ranking and the health of the tracker.
     // pointer-events:none, so it can never intercept a click. Off by default.
     SHOW_OVERLAY: false,
-    OVERLAY_CORNER: 'bottom-right',   // top-left | top-right | bottom-left | bottom-right
+    OVERLAY_CORNER: 'bottom-right',   // vertical placement only: 'top…' or 'bottom…'
+    // Distance from the right edge, used only if the roster panel cannot be
+    // measured. Normally the overlay auto-positions just left of your roster.
+    OVERLAY_RIGHT_OFFSET: 330,
     OVERLAY_ROWS: 6,
 
     // --- 5. last-second pick ------------------------------------------------
@@ -1299,22 +1302,41 @@
 
   let overlayEl = null;
 
+  /**
+   * Position the panel just LEFT of the roster column so it never covers your
+   * team, overlapping the bottom-right of the player table instead. The roster
+   * panel's left edge is measured at render time rather than hard-coded, so it
+   * adapts to window width; CFG.OVERLAY_RIGHT_OFFSET is only the fallback.
+   */
+  function overlayOffsets() {
+    const panel = myPanel();
+    let right = CFG.OVERLAY_RIGHT_OFFSET;
+    if (panel) {
+      const r = panel.getBoundingClientRect();
+      if (r.width > 0 && r.left > 200) {
+        right = Math.round(window.innerWidth - r.left) + 12;
+      }
+    }
+    return { right: Math.max(12, right) };
+  }
+
   function overlay() {
     if (!CFG.SHOW_OVERLAY) return null;
-    if (overlayEl && overlayEl.isConnected) return overlayEl;
-    const corner = {
-      'top-left': 'top:12px;left:12px', 'top-right': 'top:12px;right:12px',
-      'bottom-left': 'bottom:12px;left:12px', 'bottom-right': 'bottom:12px;right:12px',
-    }[CFG.OVERLAY_CORNER] || 'bottom:12px;right:12px';
+    const { right } = overlayOffsets();
+    if (overlayEl && overlayEl.isConnected) {
+      overlayEl.style.right = `${right}px`;      // window may have been resized
+      return overlayEl;
+    }
+    const vertical = /^top/.test(CFG.OVERLAY_CORNER) ? 'top:12px' : 'bottom:12px';
     overlayEl = document.createElement('div');
-    // pointer-events:none is the safety property — clicks pass straight through
-    // to Yahoo underneath, so the overlay can never cause a stray draft.
-    overlayEl.style.cssText = `position:fixed;${corner};z-index:2147483647;` +
-      'width:300px;max-height:52vh;overflow:hidden;pointer-events:none;' +
-      'font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;' +
-      'background:rgba(17,19,24,.94);color:#e8ecf0;border:1px solid #2b333c;' +
-      'border-radius:8px;padding:9px 11px;box-shadow:0 6px 24px rgba(0,0,0,.35);';
-    document.body.appendChild(overlayEl);   // sibling of Yahoo's tree, never inside it
+    // pointer-events:none is the safety property — clicks pass straight through to
+    // Yahoo underneath, so the overlay can never cause a stray draft.
+    overlayEl.style.cssText = `position:fixed;${vertical};right:${right}px;` +
+      'z-index:2147483647;width:310px;max-height:60vh;overflow:hidden;pointer-events:none;' +
+      'font:11.5px/1.45 ui-monospace,Menlo,monospace;background:rgba(17,19,24,.94);' +
+      'color:#e8ecf0;border:1px solid #2b333c;border-radius:8px;padding:9px 11px;' +
+      'box-shadow:0 6px 24px rgba(0,0,0,.35)';
+    document.body.appendChild(overlayEl);       // sibling of Yahoo's tree, never inside it
     return overlayEl;
   }
 

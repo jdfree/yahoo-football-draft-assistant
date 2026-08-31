@@ -290,19 +290,34 @@
    * "Sun 11:00 am" instead, so the countdown never appeared to reach zero and the
    * last-second autopick never fired.
    */
+  /**
+   * The pick clock. Yahoo renders it two different ways and this cost several
+   * failed autopicks before it was spotted:
+   *
+   *   11 seconds or more -> "00:12"   (mm:ss)
+   *   10 seconds or less -> "5"       (a bare integer, no colon, no padding)
+   *
+   * A regex requiring the colon returns null for the entire final ten seconds —
+   * exactly the window the last-second pick needs. Accept both, and prefer the
+   * mm:ss form when both are on screen.
+   */
   function secondsLeft() {
-    let best = null;
-    for (const el of document.querySelectorAll('div,span,p,h1,h2,h3')) {
+    const found = [];
+    for (const el of document.querySelectorAll('div,span,p,h1,h2,h3,b,strong')) {
       if (el.children.length) continue;                 // leaf nodes only
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.top > 200) continue; // the clock sits at the top
       const t = (el.textContent || '').trim();
-      const m = /^(\d{1,2}):(\d{2})$/.exec(t);         // the WHOLE text, not a substring
-      if (!m) continue;
-      const secs = (+m[1]) * 60 + (+m[2]);
-      if (secs > 20 * 60) continue;                     // a pick clock, not a date
-      const top = el.getBoundingClientRect().top;
-      if (best === null || top < best.top) best = { secs, top };
+      let secs = null;
+      const mm = /^(\d{1,2}):(\d{2})$/.exec(t);
+      if (mm) secs = (+mm[1]) * 60 + (+mm[2]);
+      else if (/^\d{1,2}$/.test(t)) secs = +t;          // final ten seconds
+      if (secs === null || secs > 20 * 60) continue;
+      found.push({ secs, top: rect.top, colon: !!mm });
     }
-    return best ? best.secs : null;
+    if (!found.length) return null;
+    found.sort((a, b) => (b.colon - a.colon) || (a.top - b.top));
+    return found[0].secs;
   }
 
   /**

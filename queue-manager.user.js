@@ -40,7 +40,7 @@
     POOL: ['Quarterbacks', 'Running Backs', 'Wide Receivers', 'Tight Ends', 'Kickers', 'Team Defenses'],
 
     // --- 1. queue size -----------------------------------------------------
-    QUEUE_SIZE: 5,
+    QUEUE_SIZE: 8,
 
     // --- 2. starters vs reserves -------------------------------------------
     // How much a player is worth by the role he would fill. Raising RESERVE
@@ -925,49 +925,43 @@
    */
   async function pruneQueue() {
     const have = roster();
-
-    /**
-     * The queue is insertion-ordered and Yahoo drafts from the top, so a stale
-     * zero-value flex player sitting above a needed kicker will be taken first
-     * and leave the roster illegal. Once required positions can no longer be
-     * deferred, nothing but those positions belongs in the queue.
-     */
-    {
-      const count = (p) => have.filter((x) => x.pos === p).length;
-      const missing = Object.entries(CFG.STARTERS)
-        .flatMap(([p, k]) => Array(Math.max(0, k - count(p))).fill(p));
-      const picksLeft = rosterSize() - have.length;
-      if (picksLeft > 0 && missing.length >= picksLeft) {
-        const needed = new Set(missing);
-        const view = queueView();
     const b2b = backToBack();
+    const view = queueView();
+    const bad = new Set();
+    const mark = (p) => bad.add(`${p.name}|${p.pos}`);
+
+    // The queue is insertion-ordered and Yahoo drafts from the top, so a stale
+    // zero-value entry above a needed position would be taken first and leave the
+    // roster illegal. Once required positions cannot be deferred, nothing else
+    // belongs in the queue.
+    const count = (pos) => have.filter((x) => x.pos === pos).length;
+    const missing = Object.entries(CFG.STARTERS)
+      .flatMap(([p, k]) => Array(Math.max(0, k - count(p))).fill(p));
+    const picksLeft = rosterSize() - have.length;
+    if (picksLeft > 0 && missing.length >= picksLeft) {
+      const needed = new Set(missing);
+      const wrong = view.filter((p) => !needed.has(p.pos));
+      if (wrong.length) {
+        say(`must-fill ${[...needed].join('/')} with ${picksLeft} picks left — ` +
+            `clearing ${wrong.length} other entries`);
+        wrong.forEach(mark);
+      }
+    }
+
     const seen = {};
-    const bad = new Set();
-
     for (const p of view) {
-      const rostered = have.filter((h) => h.pos === p.pos).length;
-      // Once a K or DEF is rostered we will essentially never want another.
-      if ((p.pos === 'K' || p.pos === 'DEF') && rostered >= (CFG.CAPS[p.pos] || 1)) {
-        bad.add(`${p.name}|${p.pos}`); continue;
+      if (bad.has(`${p.name}|${p.pos}`)) continue;
+      // Once a K or DEF is on the roster we will essentially never want another.
+      if ((p.pos === 'K' || p.pos === 'DEF') && count(p.pos) >= (CFG.CAPS[p.pos] || 1)) {
+        mark(p); continue;
       }
-      if (p.val === null) { bad.add(`${p.name}|${p.pos}`); continue; }
+      if (p.val === null) { mark(p); continue; }     // drafted, or capped out
       // No position may occupy more than QUEUE_SIZE-2 slots, so the queue always
-      // holds a real alternative rather than variations on one decision.
+      // holds a genuine alternative rather than variations on one decision.
       seen[p.pos] = (seen[p.pos] || 0) + 1;
-      if (seen[p.pos] > positionLimit(p.pos, b2b)) bad.add(`${p.name}|${p.pos}`);
+      if (seen[p.pos] > positionLimit(p.pos, b2b)) mark(p);
     }
 
-    const cap = backToBack() ? 1 : 2;
-    const seen = { K: 0, DEF: 0 };
-    const bad = new Set();
-    for (const p of queueView()) {
-      const rostered = have.filter((h) => h.pos === p.pos).length;
-      if ((p.pos === 'K' || p.pos === 'DEF') && rostered >= (CFG.CAPS[p.pos] || 1)) {
-        bad.add(`${p.name}|${p.pos}`); continue;
-      }
-      if (p.val === null) { bad.add(`${p.name}|${p.pos}`); continue; }
-      if (p.pos === 'K' || p.pos === 'DEF') { if (++seen[p.pos] > cap) bad.add(`${p.name}|${p.pos}`); }
-    }
     if (!bad.size) return [];
     const out = await removeFromQueue((pl) => bad.has(`${pl.name}|${pl.pos}`));
     await clearFilters();

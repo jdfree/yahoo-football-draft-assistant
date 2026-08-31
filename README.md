@@ -46,13 +46,29 @@ claiming to be Chrome, and the real HTML to anything that identifies honestly as
 script. The script therefore sends its own user-agent. Do not "fix" it by pasting
 in a browser user-agent — that is what breaks it.
 
-## Player pool
+## Queue manager
 
-Read once, immediately at draft start, and cached — projected points and ADP do
-not change during a draft. Depth: top 75 QB and TE, top 300 WR/RB/Flex, all
-kickers and defenses, capturing NFL team, projected points, ADP and bye.
+`queue-manager.user.js` (Tampermonkey) keeps the five best available players in
+your Yahoo queue. **It never drafts.** When your turn arrives it goes silent and
+hands the draft back to you — the queue is the safety net, because Yahoo drafts
+the top of your queue if your clock expires.
 
-*(Script pending.)*
+Set `CFG.SLOT` and `CFG.TEAMS`, leave `DRY_RUN: true` for a full mock, then go live.
+
+How it works:
+
+- **Reads the player pool once**, at draft start — top 75 QB and TE, top 300
+  WR/RB/Flex, all kickers and defenses, with NFL team, projected points, ADP and
+  bye. None of that changes during a draft, so there is no reason to read it twice.
+- **Tracks availability from the picks feed**, not by rescanning the player table.
+  Each pick just removes a name from the pool.
+- **Refills whenever the queue drops below five**, which happens exactly when one
+  of your queued players is drafted by anyone.
+- **Does nothing during your turn.** No clicks, no queue edits, no tab switching.
+
+Every player row carries `.ys-addqueue[data-id]` — Yahoo's own player id, and the
+only stable key in the room. Names are abbreviated to a first initial and collide
+(`B. Robinson` is two different running backs), so nothing keys on them.
 
 ## How it values a player
 

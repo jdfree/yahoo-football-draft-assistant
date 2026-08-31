@@ -371,26 +371,60 @@
   // takes a moment to re-render. Without a cooldown we clicked it repeatedly and
   // risked toggling it straight back ON.
   let lastToggle = 0;
+  /**
+   * The autopick dialog cannot be found in the DOM at all — its text is not in
+   * document.body, so Yahoo renders it in a CLOSED shadow root that
+   * querySelectorAll cannot reach. There is no button available for us to click.
+   *
+   * Escape does close it (verified live), so that is the only handle we have. The
+   * dialog always accompanies autopick switching on, and the toggle's checkmark IS
+   * detectable, so Escape goes out whenever we see autodraft enabled.
+   */
+  function dismissByEscape() {
+    for (const target of [document, document.body, document.activeElement].filter(Boolean)) {
+      for (const type of ['keydown', 'keyup']) {
+        target.dispatchEvent(new KeyboardEvent(type, {
+          key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
+          bubbles: true, cancelable: true,
+        }));
+      }
+    }
+  }
+
   function ensureLiveDrafting() {
     let acted = false;
 
-    const d = document.querySelector('[role=dialog]');
-    if (d && /autopick|autodraft|inactivity/i.test(d.innerText || '')) {
-      const btn = [...d.querySelectorAll('button')].pop();
-      if (btn) { btn.click(); say('dismissed autopick dialog'); acted = true; }
+    // The dialog has NO role=dialog and no aria-modal, so it is found by its text.
+    // Match on innerText of div/section: textContent also hits inline <script>
+    // source that mentions autopick, which is pure noise.
+    const carriers = [...document.querySelectorAll('div,section')].filter((e) => {
+      const t = e.innerText || '';
+      return /autopick mode|due to inactivity/i.test(t) && t.length < 400;
+    });
+
+    if (carriers.length) {
+      // Innermost carrier, then climb to whatever is actually positioned as a modal.
+      const inner = carriers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0];
+      let modal = inner;
+      for (let n = inner, i = 0; n && i < 8; n = n.parentElement, i++) {
+        const cs = getComputedStyle(n);
+        if (cs.position === 'fixed' || cs.position === 'absolute' || (+cs.zIndex > 10)) { modal = n; break; }
+      }
+      const close = [...modal.querySelectorAll('button')]
+        .find((b) => /close|dismiss|ok|got it|×|✕/i.test(b.innerText || b.getAttribute('aria-label') || ''))
+        || [...modal.querySelectorAll('button')].find((b) => b.querySelector('svg'))
+        || [...modal.querySelectorAll('button')].pop();
+      if (close) { close.click(); say('dismissed autopick dialog'); acted = true; }
+      else { dismissByEscape(); say('dismissed autopick dialog via Escape'); acted = true; }
     }
 
-    // The toggle is outline-styled when off and filled when on, with no aria state
-    // to read, so detect it by whether the button has a solid background.
-    const tog = [...document.querySelectorAll('button')]
-      .find((b) => /^Autodraft$/i.test((b.innerText || '').trim()));
-    if (tog && Date.now() - lastToggle > 3000) {
-      const bg = getComputedStyle(tog).backgroundColor;
-      const solid = bg && !/rgba?\(0, 0, 0, 0\)|transparent|rgb\(255, 255, 255\)/i.test(bg);
-      if (solid && Date.now() - lastToggle > 3000) {
-        lastToggle = Date.now();
-        tog.click(); say('autodraft was on — switched off'); acted = true;
-      }
+    // Separately: put autodraft back off. The toggle needs a beat to re-render, so
+    // rate-limit it or the MutationObserver clicks it repeatedly and flips it on.
+    if (autodraftOn() && Date.now() - lastToggle > 3000) {
+      lastToggle = Date.now();
+      const tog = [...document.querySelectorAll('button')]
+        .find((b) => /^Autodraft$/i.test((b.innerText || '').trim()));
+      if (tog) { tog.click(); say('autodraft was on — switched off'); acted = true; }
     }
     return acted;
   }

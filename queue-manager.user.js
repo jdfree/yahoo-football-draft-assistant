@@ -61,8 +61,11 @@
     PLAYOFF_SWING: 0.10,
 
     // --- overlay ------------------------------------------------------------
-    // Read-only panel showing the live ranking and why. Off by default.
+    // Read-only panel showing the live ranking and the health of the tracker.
+    // pointer-events:none, so it can never intercept a click. Off by default.
     SHOW_OVERLAY: false,
+    OVERLAY_CORNER: 'bottom-right',   // top-left | top-right | bottom-left | bottom-right
+    OVERLAY_ROWS: 6,
 
     // --- 5. last-second pick ------------------------------------------------
     // Seconds left on YOUR clock at which the manager drafts the top of the queue
@@ -771,6 +774,7 @@
         if (CFG.AUTOPICK_AT_SECONDS > 0 && left !== null && left <= CFG.AUTOPICK_AT_SECONDS) {
           await draftQueueTop();
         }
+        renderOverlay();          // read-only; never touches the queue
         return;
       }
 
@@ -789,11 +793,94 @@
       if (queueCount() < CFG.QUEUE_SIZE) await refill();
 
       try { localStorage.setItem('ys_dump', JSON.stringify(window.__queueDump())); } catch (e) {}
+      renderOverlay();
     } catch (e) {
       say(`ERROR ${e.message}`);
     } finally {
       busy = false;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Overlay (optional, read-only)
+  // ---------------------------------------------------------------------------
+
+  let overlayEl = null;
+
+  function overlay() {
+    if (!CFG.SHOW_OVERLAY) return null;
+    if (overlayEl && overlayEl.isConnected) return overlayEl;
+    const corner = {
+      'top-left': 'top:12px;left:12px', 'top-right': 'top:12px;right:12px',
+      'bottom-left': 'bottom:12px;left:12px', 'bottom-right': 'bottom:12px;right:12px',
+    }[CFG.OVERLAY_CORNER] || 'bottom:12px;right:12px';
+    overlayEl = document.createElement('div');
+    // pointer-events:none is the safety property — clicks pass straight through
+    // to Yahoo underneath, so the overlay can never cause a stray draft.
+    overlayEl.style.cssText = `position:fixed;${corner};z-index:2147483647;` +
+      'width:300px;max-height:52vh;overflow:hidden;pointer-events:none;' +
+      'font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;' +
+      'background:rgba(17,19,24,.94);color:#e8ecf0;border:1px solid #2b333c;' +
+      'border-radius:8px;padding:9px 11px;box-shadow:0 6px 24px rgba(0,0,0,.35);';
+    document.body.appendChild(overlayEl);   // sibling of Yahoo's tree, never inside it
+    return overlayEl;
+  }
+
+  function renderOverlay() {
+    const el = overlay();
+    if (!el) { if (overlayEl) { overlayEl.remove(); overlayEl = null; } return; }
+
+    // Yahoo's own dialogs must stay visible and clickable — the autopick dialog
+    // especially. Hide rather than risk covering it.
+    if (document.querySelector('[role=dialog],[aria-modal=true]')) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = '';
+
+    const esc = (t) => String(t ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const mine = myTurn();
+    const left = secondsLeft();
+    const ranked = state.armed ? planQueue(CFG.OVERLAY_ROWS) : [];
+    const b2b = backToBack();
+
+    const head = mine
+      ? `<span style="color:#e0a340">YOUR PICK${left !== null ? ` · ${left}s` : ''}</span>`
+      : `queue ${queueCount()}/${CFG.QUEUE_SIZE} · R${roundNow()}`;
+
+    const rows = ranked.map((p, i) => {
+      const note = p.role === 'must-fill' ? 'must fill'
+        : p.role === 'reserve' ? `reserve x${CFG.WEIGHT_RESERVE}`
+        : p.role === 'flex' ? 'flex' : 'starter slot';
+      const flags = [];
+      if (p.playoffMod && Math.abs(p.playoffMod - 1) > 0.005) flags.push(`po ${p.playoffMod > 1 ? '+' : ''}${((p.playoffMod - 1) * 100).toFixed(1)}%`);
+      if (p.byeMod && p.byeMod < 1) flags.push(`bye -${((1 - p.byeMod) * 100).toFixed(0)}%`);
+      return `<div style="display:flex;gap:6px;margin-top:3px">` +
+        `<span style="color:#7c8894;width:12px">${i + 1}</span>` +
+        `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">` +
+        `${esc(p.name)} <span style="color:#7c8894">${esc(p.pos)}-${esc(p.team)}</span></span>` +
+        `<span style="color:${p.val > 0 ? '#5cb585' : '#7c8894'};text-align:right;width:52px">` +
+        `${p.val === Infinity ? 'MUST' : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span></div>` +
+        `<div style="color:#7c8894;margin-left:18px">${note}${flags.length ? ' · ' + flags.join(' · ') : ''}</div>`;
+    }).join('');
+
+    const adOff = !(() => {
+      const t = [...document.querySelectorAll('button')].find((b) => /^Autodraft$/i.test((b.innerText || '').trim()));
+      if (!t) return false;
+      const bg = getComputedStyle(t).backgroundColor;
+      return bg && !/rgba?\(0, 0, 0, 0\)|transparent|rgb\(255, 255, 255\)/i.test(bg);
+    })();
+
+    el.innerHTML =
+      `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2b333c;padding-bottom:5px">` +
+      `<b>DRAFT ASSISTANT</b><span>${head}</span></div>` +
+      (mine ? `<div style="color:#e0a340;margin-top:4px">hands off — your pick` +
+              `${CFG.AUTOPICK_AT_SECONDS > 0 ? `, auto at ${CFG.AUTOPICK_AT_SECONDS}s` : ''}</div>` : '') +
+      rows +
+      `<div style="color:#7c8894;border-top:1px solid #2b333c;margin-top:6px;padding-top:5px">` +
+      `pool ${state.pool.size} · drafted ${state.taken.size} · ` +
+      `<span style="color:${adOff ? '#5cb585' : '#e27a72'}">autodraft ${adOff ? 'off' : 'ON'}</span>` +
+      `${b2b ? ' · <span style="color:#e0a340">back-to-back: 1 K/DEF</span>' : ''}</div>`;
   }
 
   const timer = setInterval(tick, CFG.TICK_MS);

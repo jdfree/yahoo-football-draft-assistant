@@ -220,6 +220,27 @@ at the two endpoint seats (`s = 1` or `s = TEAMS`). Every middle seat always has
 least one opposing pick in between, so the backup is available to them on every
 pick.
 
+## Overlay
+
+| Parameter | Default |
+| --- | --- |
+| `SHOW_OVERLAY` | `false` |
+| `OVERLAY_CORNER` | `'bottom-right'` |
+| `OVERLAY_ROWS` | `6` |
+
+A read-only panel showing the live ranking, each player's score decomposition, and
+the health of the tracker — pool size, picks recorded, and whether autodraft is
+currently off. Two of the silent failures found during development would have been
+visible immediately on that last line instead of only in a dump afterwards.
+
+It is a `position: fixed` div appended to `document.body`, so it is a sibling of
+Yahoo's tree and never perturbs it. It sets **`pointer-events: none`**, which makes
+it transparent to the mouse: clicks pass through to whatever is underneath, so it
+cannot intercept one or cause a stray draft even if it sits over the Draft button.
+
+It hides itself whenever a `[role=dialog]` is present, so it can never cover the
+autopick dialog you need to see and dismiss.
+
 ## Never during your turn
 
 The manager does not touch the queue while it is your turn, without exception — a

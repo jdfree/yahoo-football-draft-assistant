@@ -2171,8 +2171,15 @@
     if (added || removed) {
       say(`reconciled: added ${added}, removed ${removed}, kept ${good}`);
     }
-    // Order is now a drag, not a rebuild, so it costs nothing to keep it right.
-    if (allowReorder && CFG.ENFORCE_QUEUE_ORDER && !myTurn()) await reorderQueue(plan);
+    // Order is a drag, not a rebuild, so it costs nothing and runs whenever the
+    // queue's CONTENTS changed — not only inside the rebuild window. Gating it on
+    // the window meant a queue topped up between windows kept its insertion order:
+    // the plan read Fannin 24.7, Pitts 20.5, Prescott 18.9, Kittle 15.4 while the
+    // queue showed Pitts, Fannin, Kittle, Prescott. Reordering is a no-op when the
+    // order is already right, so running it more often is free.
+    if ((allowReorder || added || removed) && CFG.ENFORCE_QUEUE_ORDER && !myTurn()) {
+      await reorderQueue(plan);
+    }
     await clearFilters();
     return added + removed;
   }
@@ -2576,6 +2583,12 @@
           await replenish();
           if (queueCount() < CFG.QUEUE_SIZE) { await refill(); await clearFilters(); }
         });
+        // refill appends, so anything it added is sitting at the bottom regardless
+        // of what it is worth. Put the queue back in order once it is done.
+        if (CFG.ENFORCE_QUEUE_ORDER && !myTurn()) {
+          const plan = planQueue(CFG.QUEUE_SIZE, []);
+          if (plan.length) await reorderQueue(plan);
+        }
       } finally { state.working = false; renderOverlay(); }
 
       try { localStorage.setItem('ys_dump', JSON.stringify(window.__queueDump())); } catch (e) {}

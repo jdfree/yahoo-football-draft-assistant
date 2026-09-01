@@ -47,24 +47,20 @@
     // relative to STARTER buys the best remaining player at a contested position
     // instead of plugging an empty starting slot with someone mediocre.
     //
-    // The ratio is what matters: at RESERVE 0.25 a bench player must be worth four
-    // times a starter's surplus to outrank him. That figure is pinned by four
-    // cases observed live, which bound it from both sides:
+    // A reserve is worth a fifth of a starter — EXCEPT at running back and
+    // receiver, where a reserve counts three times as much as a reserve elsewhere
+    // (an effective 0.6). Bench depth genuinely matters at those positions: you
+    // start two of each plus a flex and they miss time most often, whereas a backup
+    // quarterback behind an established starter is worth almost nothing however
+    // large his nominal surplus.
     //
-    //   RB +35.5 bench must beat K +7.58 starter     -> needs > 0.214
-    //   RB +80  bench must beat DEF +3.3 starter     -> needs > 0.041
-    //   K +7.58 starter must beat QB +24 bench       -> needs < 0.316
-    //   WR +3   starter must beat RB +8 bench        -> needs < 0.375
-    //
-    // So anything in 0.25-0.30 satisfies all four; 0.20 fails the first and 0.35
-    // fails the third. The asymmetry is real rather than arbitrary: a kicker's
-    // surplus is the gap between the best kicker and a replacement one, worth
-    // little in points, while a large surplus at running back is worth a lot — but
-    // a backup quarterback behind an established starter is worth almost nothing
-    // however large his nominal surplus.
+    // This is what separates the cases seen live: a back worth +35.5 on the bench
+    // scores 21.3 and beats a kicker worth +7.58 filling an empty slot, while a
+    // quarterback worth +24 on the bench scores 4.8 and does not.
     WEIGHT_STARTER: 1.0,
     WEIGHT_FLEX: 0.9,
-    WEIGHT_RESERVE: 0.25,
+    WEIGHT_RESERVE: 0.2,
+    BENCH_RB_WR_MULTIPLIER: 3,
 
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff
@@ -1566,33 +1562,23 @@
       const bm = byeMultiplier(p, have);
       const teamMod = sameTeamMultiplier(p, have);
 
-      /**
-       * Bench depth at RB and WR is worth more than the surplus alone says: you
-       * start two of each plus a flex, and they miss time most often, so a backup
-       * there actually plays.
-       *
-       * The boost lands on the PROJECTION, not on the surplus. Scaling a surplus
-       * breaks down precisely when it matters: by the late rounds nearly every
-       * bench surplus is negative, and multiplying a negative by three pushed RB
-       * and WR DOWN the queue — the reverse of the intent. Observed live at round
-       * 10 with bench values of -0.61, -1.60 and -2.56. Adding to the projection
-       * shifts the surplus up whatever its sign.
-       */
-      const benchBoost = (role === 'reserve' && (p.pos === 'RB' || p.pos === 'WR'))
-        ? 1 + CFG.BENCH_RB_WR_BOOST : 1;
-      const rankRaw = p.proj * benchBoost * teamMod - bar;
-      const sortVal = rankRaw * weight * bm * pm;
+      // A bench RB or WR carries three times the weight of a bench player
+      // elsewhere. Applied to the role weight, so 0.2 becomes 0.6 for them.
+      const benchMult = (role === 'reserve' && (p.pos === 'RB' || p.pos === 'WR'))
+        ? CFG.BENCH_RB_WR_MULTIPLIER : 1;
+      const rankRaw = p.proj * teamMod - bar;
+      const sortVal = rankRaw * weight * benchMult * bm * pm;
       const playoffDelta = raw * (pm - 1);
 
       return { ...p, raw: +raw.toFixed(2), val: +raw.toFixed(2),
                playoffDelta: +playoffDelta.toFixed(2),
                tier: ROLE_TIER[role] ?? 2,
-               sortVal: +sortVal.toFixed(2), depthMult: +benchBoost.toFixed(2), role,
+               sortVal: +sortVal.toFixed(2), depthMult: benchMult, role,
                gated: isGated(p),
                playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3), teamMod: +teamMod.toFixed(3),
                why: `${p.proj} - repl ${bar.toFixed(1)} = ${raw.toFixed(1)} shown;` +
                     ` rank x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` +
-                    (benchBoost !== 1 ? ` proj+${Math.round((benchBoost - 1) * 100)}%(bench)` : '') };
+                    (benchMult !== 1 ? ` x${benchMult}(bench RB/WR)` : '') };
     // Rank on VALUE, with role expressed as a weight rather than a hard tier.
     //
     // Tiering every starter above every bench player was too blunt in both

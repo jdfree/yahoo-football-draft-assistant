@@ -2394,10 +2394,15 @@
       const short = queueCount() < CFG.QUEUE_SIZE;
 
 
-      // Re-read the queue from the page every cycle. The human may have
-      // reordered it, deleted from it, or added to it since the last pass, and a
-      // reload wipes anything we remembered — so nothing is carried forward.
-      await syncQueue();
+      // Reading the queue's CONTENTS means selecting the Queue tab, and reading
+      // the picks feed means selecting Picks — so doing both every cycle flips the
+      // left panel back and forth continuously, which is horrible to watch and
+      // buys nothing. The queue's SIZE comes from the tab badge without selecting
+      // anything, and while the queue is full there is nothing to decide.
+      //
+      // So: a full queue, no pick of ours, and no rebuild due means this tick does
+      // nothing at all.
+      const queueFull = queueCount() >= CFG.QUEUE_SIZE;
 
       const here = draftPosition().overall;
       const away = picksUntilOurTurn(here);
@@ -2421,12 +2426,25 @@
         && state.lastFillTurn !== turn
         && !(state.lastFillTurn && turn - state.lastFillTurn <= window);
 
+      // Would ensureProjection actually recompute? Only then is the picks feed
+      // worth reading; "within three picks of our turn" stays true for several
+      // consecutive ticks and used to re-read it on every one of them.
+      const needProjection = away <= CFG.PROJECT_AT_PICKS_AWAY
+        && (!state.proj || state.proj.turn !== turn);
+
+      if (!weDrafted && !dueForRebuild && !needProjection && queueFull) {
+        state.working = false;
+        renderOverlay();
+        return;                                  // settled: touch nothing
+      }
+
       // The picks feed feeds the projection, which feeds the rebuild — so refresh
       // it when either is about to run. A projection once ran with teamRosters
       // empty and spent 29 simulated picks on 11 kickers and 11 defenses.
-      if (weDrafted || dueForRebuild || away <= CFG.PROJECT_AT_PICKS_AWAY) {
-        await syncPicksFromPanel();
-      }
+      if (weDrafted || dueForRebuild || needProjection) await syncPicksFromPanel();
+
+      // Now read the queue itself — we are going to act on it.
+      await syncQueue();
 
       // Projects only when close to our turn; a no-op otherwise.
       await ensureProjection(here);

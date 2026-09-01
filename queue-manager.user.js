@@ -96,16 +96,17 @@
 
     // Rewrite the queue so its ORDER matches the ranking, not just its membership.
     //
-    // On, but it only ever runs when a new round of projected floors lands, or
-    // right after our own pick. That gate is what makes it affordable: Yahoo has
-    // no reorder primitive, so a misplaced entry costs a remove-and-re-add of
-    // everything below it, and reconciling on every tick tore the queue down and
-    // rebuilt it continuously. Once per round it is a single tidy-up.
+    // OFF, because it cannot be reconciled with making the fewest changes. Yahoo
+    // has no reorder primitive, so lifting one entry means removing and re-adding
+    // everything above it: enforcing order turned a rebuild that should have
+    // touched one or two rows into "added 1, removed 8, kept 0". Most of what is
+    // already queued is still exactly what we want.
     //
-    // It matters because Yahoo drafts from the TOP of the queue when your clock
-    // expires. Left alone, insertion order persists: a live queue led with a
-    // defense worth +3.5 and a kicker worth +2.1 ahead of a back worth +91.8.
-    ENFORCE_QUEUE_ORDER: true,
+    // With it off, a rebuild is a pure delta — add what is missing, drop only what
+    // no longer belongs — and the queue keeps its insertion order. The cost is
+    // that if your clock expires, Yahoo autodrafts the top of the queue rather
+    // than the best player in it.
+    ENFORCE_QUEUE_ORDER: false,
 
     // How many rounds ahead the projection looks. Deciding in round 10 is measured
     // against the board expected at our round-12 pick. Two is the point at which a
@@ -2029,6 +2030,9 @@
     //
     // A full re-plan happens when our own pick changes what we need, which is the
     // one moment the queue's premise is genuinely invalid.
+    // The DELTA, and nothing more: an entry goes only if the plan no longer wants
+    // him. Most of a settled queue is still exactly right, and a rebuild should
+    // leave those rows untouched.
     const unavailable = (pl) => state.taken.has(key(pl.name, pl.pos));
     let doomedList = allowReorder
       ? ours.filter((pl) => !keep.has(key(pl.name, pl.pos)))

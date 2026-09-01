@@ -69,6 +69,10 @@
     WEIGHT_RESERVE: 0.2,
     BENCH_RB_WR_MULTIPLIER: 2,
 
+    // O15 — how many of a position the simulation lets one team carry. Nobody
+    // rosters three quarterbacks or a second kicker. RB and WR are left to CAPS.
+    SIM_ROSTER_LIMITS: { QB: 2, TE: 2, K: 1, DEF: 1 },
+
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff
     // schedule in the league. At 0.10, two otherwise identical players differ by
@@ -137,11 +141,6 @@
 
     // --- backup depth at RB/WR ----------------------------------------------
 
-    // How many rounds from the end an OPPONENT is assumed to consider a kicker or
-    // defense. A kicker scores positive against baseline from round one, so
-    // without this the simulation drafts them constantly and never touches the
-    // skill positions that are actually disappearing.
-    OPPONENT_LATE_K_DEF: 2,
 
     // --- same-team bias -----------------------------------------------------
     // Percentage reduction applied to a player's projection when you already hold
@@ -787,40 +786,27 @@
     if (!state.baselinePool || candidate.length > state.baselinePool.length) {
       state.baselinePool = candidate;
     }
-    const all = [...state.baselinePool].sort((a, b) => b.proj - a.proj);
-    const need = {};
-    for (const [pos, n] of Object.entries(CFG.STARTERS)) need[pos] = n * CFG.TEAMS;
-    let flexLeft = CFG.FLEX * CFG.TEAMS;
-
-    const starters = {};
-    const take = (p) => { (starters[p.pos] = starters[p.pos] || []).push(p.proj); };
-
-    for (const p of all) {                       // dedicated slots, best first
-      if ((need[p.pos] || 0) > 0) { need[p.pos]--; take(p); p._starter = true; }
-    }
-    for (const p of all) {                       // then flex, from what is left
-      if (p._starter || flexLeft <= 0) continue;
-      if (FLEX_POS.includes(p.pos)) { flexLeft--; take(p); p._starter = true; }
-    }
-    for (const p of all) delete p._starter;
+    // One number per position: the projection of the Nth-best player there, where
+    // N = TEAMS x slots. RB and WR are given ONE MORE slot than the lineup lists,
+    // because the flex is filled from them — with two RB slots the bar is the
+    // (TEAMS x 3)-th back, not the (TEAMS x 2)-th. This replaces the old
+    // dedicated-then-flex allocation, which arrived at roughly the same place by a
+    // longer route and left RB and WR pinned to each other.
+    const byPos = {};
+    for (const p of state.baselinePool) (byPos[p.pos] = byPos[p.pos] || []).push(p.proj);
 
     const baseline = {};
-    for (const [pos, list] of Object.entries(starters)) baseline[pos] = Math.min(...list);
+    for (const [pos, slots] of Object.entries(CFG.STARTERS)) {
+      const extra = (pos === 'RB' || pos === 'WR') ? 1 : 0;
+      const n = CFG.TEAMS * (slots + extra);
+      const list = (byPos[pos] || []).sort((a, b) => b - a);
+      if (!list.length) continue;
+      baseline[pos] = list[Math.min(n, list.length) - 1];
+    }
     state.baseline = baseline;
     state.baselineDone = true;
     say(`baseline (worst starter, fixed for the draft): ${JSON.stringify(baseline)}`);
 
-    // Self-check. A corrupt pool does not make the baseline throw, it just makes it
-    // quietly wrong — a duplicated pool once put RB at 151 instead of 108 and
-    // nothing complained. The count of players at or above the baseline must match
-    // the number of starting slots at that position, so verify it and say so.
-    for (const [pos, list] of Object.entries(starters)) {
-      const atOrAbove = state.baselinePool.filter((p) => p.pos === pos && p.proj >= baseline[pos]).length;
-      if (Math.abs(atOrAbove - list.length) > 2) {
-        say(`baseline WARNING ${pos}: ${atOrAbove} players at or above ${baseline[pos]} ` +
-            `but only ${list.length} starting slots — pool likely duplicated or mis-read`);
-      }
-    }
     return baseline;
   }
 
@@ -858,16 +844,7 @@
   /** How many picks — ours included — until we are on the clock. */
   const picksUntilOurTurn = (currentPick) => ourNextPickAfter(currentPick) - currentPick;
 
-  /** Starting slots a roster still has open, as positions a pick could fill. */
-  function openSlots(roster) {
-    const count = (pos) => roster.filter((r) => r.pos === pos).length;
-    const open = new Set();
-    let flexUsed = 0;
-    for (const pos of FLEX_POS) flexUsed += Math.max(0, count(pos) - (CFG.STARTERS[pos] || 0));
-    for (const [pos, n] of Object.entries(CFG.STARTERS)) if (count(pos) < n) open.add(pos);
-    if (flexUsed < CFG.FLEX) for (const pos of FLEX_POS) open.add(pos);
-    return open;
-  }
+
 
   /**
    * What one team would take, given its roster and who is left. Models a rational
@@ -875,57 +852,37 @@
    * draft for depth with RB/WR weighted up.
    */
   function projectedChoice(roster, pool, pickNo, base) {
-    const open = openSlots(roster);
+    const held = (pos) => roster.filter((r) => r.pos === pos).length;
+
+    // O15 — how many of a position a team will ever carry. Nobody rosters three
+    // quarterbacks or a second kicker, and without this the model spent whole
+    // rounds stacking one position. A roster that already exceeds a limit through
+    // real picks simply takes nothing more there.
+    const limit = (pos) => CFG.SIM_ROSTER_LIMITS[pos] ?? (CFG.CAPS[pos] ?? 99);
 
     // A team will not take a third player at one position sharing a bye week.
     const byeBlocked = (p) => p.bye != null &&
       roster.filter((r) => r.pos === p.pos && r.bye === p.bye).length >= 2;
 
-    // Opponents do not draft kickers and defenses until the end, whatever the
-    // surplus says, and modelling them as if they might is badly wrong: a kicker
-    // scores positive against baseline from round one, so with any unfilled K or
-    // DEF slot the model will happily take one. Left unchecked it drafted eleven
-    // of each inside thirty picks. This is a claim about how opponents behave, not
-    // about how we should — our own LATE_ONLY gate is separate and off by default.
-    const roundOfPick = Math.ceil(pickNo / CFG.TEAMS);
-    const lateEnough = roundOfPick > rosterSize() - CFG.OPPONENT_LATE_K_DEF;
-
-    // Slots a team would actually fill right now. By the middle rounds most teams
-    // have everything but a kicker and a defense left open, and those are the two
-    // they will not take yet — so "still filling starters" has to mean starters
-    // they would REALLY take. Without this those teams matched nothing at all and
-    // drafted nobody: a 38-pick horizon simulated 2 picks and the floors barely
-    // moved. A team in that position takes bench depth, which is what happens.
-    const fillable = new Set([...open].filter((pos) =>
-      lateEnough || (pos !== 'K' && pos !== 'DEF')));
-    const fillingStarters = fillable.size > 0;
-
     let best = null, bestScore = -Infinity;
     for (const p of pool) {
       if (byeBlocked(p)) continue;
-      if (!lateEnough && (p.pos === 'K' || p.pos === 'DEF')) continue;
-      if (fillingStarters && !fillable.has(p.pos)) continue;
-      if ((CFG.CAPS[p.pos] || 99) <= roster.filter((r) => r.pos === p.pos).length) continue;
+      if (held(p.pos) >= limit(p.pos)) continue;
 
-      // Bench depth at RB and WR multiplies the SCORE, exactly as V6 does on our
-      // side — same mechanism, same knob, so the two models cannot drift apart and
-      // one fix serves both.
-      //
-      // The objection to scaling a surplus was that it inverts once the surplus
-      // goes negative. That is no longer a defect here but the desired behaviour:
-      // with the rolling bar (O9) a negative score means the position is picked
-      // over, and doubling it pushes RB and WR further down rather than further up.
-      // Early, where surpluses are positive, it lifts them as intended.
-      const mult = (!fillingStarters && (p.pos === 'RB' || p.pos === 'WR'))
-        ? CFG.BENCH_RB_WR_MULTIPLIER : 1;
-      // No floor. Clamping negative scores to +1 destroyed the ordering among them:
-      // every candidate below the bar became exactly equal, so the tie-break below
-      // stopped breaking ties and made the whole decision. Late in a draft that put
-      // 24 of 30 picks on running backs; with a rolling bar, which sits close to
-      // the board by construction, it was worse still — entire rounds went to one
-      // position. A pick still happens regardless, because the best of several
-      // negative scores is still the best.
-      const score = (p.proj - (base[p.pos] ?? p.proj)) * mult;
+      const surplus = p.proj - (base[p.pos] ?? p.proj);
+
+      // The RB/WR multiplier INVERTS below zero: a positive surplus is multiplied,
+      // a negative one is divided. Depth at those positions is worth reaching for
+      // when it is genuinely good, and worth tolerating when it is not — at a
+      // multiplier of 2, a back at -5 competes as -2.5, so he is taken once the
+      // lineup is otherwise full and nothing else beats that. Multiplying a
+      // negative instead pushed exactly the players the rule exists to favour to
+      // the bottom of the board.
+      const m = CFG.BENCH_RB_WR_MULTIPLIER;
+      const score = (p.pos === 'RB' || p.pos === 'WR')
+        ? (surplus >= 0 ? surplus * m : surplus / m)
+        : surplus;
+
       // Ties go to running back.
       if (score > bestScore || (score === bestScore && p.pos === 'RB' && best && best.pos !== 'RB')) {
         best = p; bestScore = score;
@@ -938,25 +895,6 @@
    * Play the draft forward from the last completed pick to our subsequent pick,
    * and report the best projection expected to survive at each position.
    */
-  /**
-   * Floors from the most recently completed projection, flattened to one number per
-   * position, for use as the next projection's baseline. Null until one exists.
-   *
-   * "Most recent" is the deepest horizon reached, since horizons only move forward.
-   * Using the EARLIEST projection instead would pin the bar near preseason values
-   * and reproduce the flattening this exists to fix.
-   */
-  function previousFloorsAsBaseline() {
-    if (!state.floors || !state.floors.size) return null;
-    let best = null, bestAt = -1;
-    for (const [at, byPos] of state.floors) if (at > bestAt) { bestAt = at; best = byPos; }
-    if (!best) return null;
-    const out = {};
-    for (const [pos, ladder] of Object.entries(best)) {
-      if (ladder && ladder.length) out[pos] = ladder[0].proj;
-    }
-    return Object.keys(out).length ? out : null;
-  }
 
   async function projectAvailability(currentPick, targetPick) {
     if (!state.baseline) return null;
@@ -977,7 +915,7 @@
      * simulated, and the floors this run produces are not written to state.floors
      * until it has returned. A projection can therefore never read itself.
      */
-    const base = previousFloorsAsBaseline() || state.baseline;
+    const base = state.baseline;
     const mine = new Set(roster().map((r) => key(r.name, r.pos)));
 
     // Everyone still on the board, best first.

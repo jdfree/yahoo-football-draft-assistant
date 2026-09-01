@@ -677,7 +677,15 @@
    * league's shape, not who happens to be undrafted.
    */
   function computeBaseline() {
-    const all = [...state.pool.values()].sort((a, b) => b.proj - a.proj);
+    // Snapshot the pool the FIRST time we compute, and always use that snapshot.
+    // The baseline describes the league's shape and must not drift: recomputing
+    // from the live pool after picks have happened walks it steadily downward,
+    // because the best players are gone. Observed live — RB fell from 108.4 to
+    // 92.6 purely because thirty-five players had been drafted in between.
+    if (!state.baselinePool || state.pool.size > state.baselinePool.length) {
+      state.baselinePool = [...state.pool.values()].map((p) => ({ pos: p.pos, proj: p.proj }));
+    }
+    const all = [...state.baselinePool].sort((a, b) => b.proj - a.proj);
     const need = {};
     for (const [pos, n] of Object.entries(CFG.STARTERS)) need[pos] = n * CFG.TEAMS;
     let flexLeft = CFG.FLEX * CFG.TEAMS;
@@ -1894,5 +1902,6 @@
     document.querySelectorAll('.ys-assist').forEach((e) => e.remove());   // leave the queue clean
     say('stopped'); };
   window.__queueState = state;
+  window.__queueCfg = CFG;          // for diagnostics
   say(`armed — ${CFG.DRY_RUN ? 'DRY RUN' : 'LIVE'}, target ${CFG.QUEUE_SIZE}, slot ${CFG.SLOT}`);
 })();

@@ -36,6 +36,12 @@ starter. Everything downstream is measured against it.
 drafted.** If the assistant is armed mid-draft, the undrafted pool is missing all
 the best players and the baseline would be far too low.
 
+The pool is snapshotted the first time the baseline is computed and that snapshot
+is reused for any recomputation — for instance when league size is corrected.
+Recomputing from the live pool walks the baseline steadily downward as the draft
+proceeds: observed live, RB fell from 108.4 to 92.6 purely because thirty-five
+players had been drafted in between.
+
 ## 2. Predicting the picks between now and our subsequent pick
 
 Run before each queue repopulation.

@@ -82,16 +82,12 @@
     // --- overlay ------------------------------------------------------------
     // Read-only panel showing the live ranking and the health of the tracker.
     // pointer-events:none, so it can never intercept a click. Off by default.
-    SHOW_OVERLAY: false,
 
     // The projected-floors strip across the bottom of the centre table. Every
     // valuation rests on these numbers, so they are worth having on screen.
     SHOW_FLOORS: true,
-    OVERLAY_CORNER: 'bottom-right',   // vertical placement only: 'top…' or 'bottom…'
     // Distance from the right edge, used only if the roster panel cannot be
     // measured. Normally the overlay auto-positions just left of your roster.
-    OVERLAY_RIGHT_OFFSET: 330,
-    OVERLAY_ROWS: 6,
 
     // --- 5. last-second pick ------------------------------------------------
     // Seconds left on YOUR clock at which the manager drafts the top of the queue
@@ -2050,6 +2046,28 @@
    * player who belongs there and drag him up. At most one move per slot, and no
    * player is ever removed — an entry that belongs in the queue stays in it.
    */
+  /**
+   * Drag one just-added player up to where the plan wants him, immediately.
+   *
+   * Yahoo appends, so every add lands at the bottom regardless of what it is
+   * worth, and sorting afterwards is a separate pass that may never run: a live
+   * round-1 fill appended J. Smith-Njigba at +67.8 in the same second the clock
+   * started, and the reorder happened 36 seconds later, after the pick. Placing
+   * each player as he arrives means an interruption leaves a correctly ordered
+   * prefix rather than an unsorted queue.
+   */
+  async function placeInQueue(player, plan) {
+    if (!CFG.ENFORCE_QUEUE_ORDER || myTurn()) return false;
+    const want = plan.findIndex((p) => key(p.name, p.pos) === key(player.name, player.pos));
+    if (want < 0) return false;
+    const live = queueRows().map((r) => { const pl = parsePlayer(r); return pl ? key(pl.name, pl.pos) : null; });
+    const at = live.lastIndexOf(key(player.name, player.pos));
+    if (at < 0) return false;
+    const to = Math.min(want, live.length - 1);
+    if (at === to) return false;
+    return moveQueueEntry(at, to);
+  }
+
   async function reorderQueue(plan) {
     const planKeys = plan.map((p) => key(p.name, p.pos));
     let moves = 0;
@@ -2134,6 +2152,7 @@
         state.ours.add(key(p.name, p.pos));
         saveOurs();
         added++;
+        await placeInQueue(p, plan);          // put him where he belongs, now
       }
     }
     for (const victim of wrong) {
@@ -2220,7 +2239,8 @@
     // produced a different plan to reconcile's, so the two disagreed permanently:
     // reconcile dropped six as "out of order", refill put them back in its own
     // order, and the pair oscillated every cycle.
-    const plan = planQueue(CFG.QUEUE_SIZE, []).filter((p) => !present.has(key(p.name, p.pos))).slice(0, need);
+    const full = planQueue(CFG.QUEUE_SIZE, []);
+    const plan = full.filter((p) => !present.has(key(p.name, p.pos))).slice(0, need);
     if (!plan.length) return;
     say(`queue ${queueCount()}/${CFG.QUEUE_SIZE} — adding ${plan.length}`);
     for (const p of plan) {
@@ -2230,6 +2250,7 @@
         state.ours.add(key(p.name, p.pos));
         saveOurs();
         say(`queued ${p.name} ${p.pos}-${p.team} val ${p.val} (${p.role}, po ${p.playoffMod}, bye ${p.byeMod})`);
+        await placeInQueue(p, full);          // Yahoo appends; put him in rank order
       }
     }
   }
@@ -2518,7 +2539,6 @@
       if (!weDrafted && !dueForRebuild && !needProjection && queueFull
           && !(state.proj && state.proj.turn !== state.lastProjApplied)) {
         state.working = false;
-        renderOverlay();
         return;                                  // settled: touch nothing
       }
 
@@ -2543,7 +2563,7 @@
 
       // Nothing is queued before the first projection exists. Ranking without
       // floors falls back to the ADP model, which misprices kickers badly.
-      if (!state.proj) { state.working = false; renderOverlay(); return; }
+      if (!state.proj) { state.working = false; return; }
 
       if (weDrafted) state.lastRoster = rc;
 
@@ -2561,7 +2581,6 @@
       // Flag the overlay while we click around the queue UI, so the human knows to
       // keep hands off rather than fighting us for the mouse.
       state.working = true;
-      renderOverlay();
       try {
         await withPlayersTab(async () => {
           await pruneQueue();
@@ -2574,10 +2593,9 @@
           const plan = planQueue(CFG.QUEUE_SIZE, []);
           if (plan.length) await reorderQueue(plan);
         }
-      } finally { state.working = false; renderOverlay(); }
+      } finally { state.working = false; }
 
       try { localStorage.setItem('ys_dump', JSON.stringify(window.__queueDump())); } catch (e) {}
-      renderOverlay();
     } catch (e) {
       say(`ERROR ${e.message}`);
     } finally {
@@ -2589,45 +2607,6 @@
   // Overlay (optional, read-only)
   // ---------------------------------------------------------------------------
 
-  let overlayEl = null;
-
-  /**
-   * Position the panel just LEFT of the roster column so it never covers your
-   * team, overlapping the bottom-right of the player table instead. The roster
-   * panel's left edge is measured at render time rather than hard-coded, so it
-   * adapts to window width; CFG.OVERLAY_RIGHT_OFFSET is only the fallback.
-   */
-  function overlayOffsets() {
-    const panel = myPanel();
-    let right = CFG.OVERLAY_RIGHT_OFFSET;
-    if (panel) {
-      const r = panel.getBoundingClientRect();
-      if (r.width > 0 && r.left > 200) {
-        right = Math.round(window.innerWidth - r.left) + 12;
-      }
-    }
-    return { right: Math.max(12, right) };
-  }
-
-  function overlay() {
-    if (!CFG.SHOW_OVERLAY) return null;
-    const { right } = overlayOffsets();
-    if (overlayEl && overlayEl.isConnected) {
-      overlayEl.style.right = `${right}px`;      // window may have been resized
-      return overlayEl;
-    }
-    const vertical = /^top/.test(CFG.OVERLAY_CORNER) ? 'top:12px' : 'bottom:12px';
-    overlayEl = document.createElement('div');
-    // pointer-events:none is the safety property — clicks pass straight through to
-    // Yahoo underneath, so the overlay can never cause a stray draft.
-    overlayEl.style.cssText = `position:fixed;${vertical};right:${right}px;` +
-      'z-index:2147483647;width:310px;max-height:60vh;overflow:hidden;pointer-events:none;' +
-      'font:11.5px/1.45 ui-monospace,Menlo,monospace;background:rgba(17,19,24,.94);' +
-      'color:#e8ecf0;border:1px solid #2b333c;border-radius:8px;padding:9px 11px;' +
-      'box-shadow:0 6px 24px rgba(0,0,0,.35)';
-    document.body.appendChild(overlayEl);       // sibling of Yahoo's tree, never inside it
-    return overlayEl;
-  }
 
   /**
    * Shows what is ACTUALLY in the queue, and explains the number next to each
@@ -2646,9 +2625,8 @@
   let floorsEl = null;
   function renderFloors() {
     if (!CFG.SHOW_FLOORS) { if (floorsEl) { floorsEl.remove(); floorsEl = null; } return; }
-    const table = playerTable();
     const floors = state.floors;
-    if (!table || !floors || !floors.size) {
+    if (!floors || !floors.size) {
       if (floorsEl) floorsEl.style.display = 'none';
       return;
     }
@@ -2684,103 +2662,16 @@
       `<span style="color:#d99b52">FLOORS R${round}</span>` +
       `<span style="color:#7c8894">pick ${at}</span>` + cells;
 
-    // Anchor to the bottom edge of the centre table, clamped into the viewport.
-    const r = table.getBoundingClientRect();
+    // Anchored to the bottom of the WINDOW, not the table. Tying it to the table
+    // meant filtering the player list to a single row jumped the strip halfway up
+    // the screen.
     const w = floorsEl.offsetWidth || 520;
-    floorsEl.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left + (r.width - w) / 2))}px`;
-    floorsEl.style.top = `${Math.min(innerHeight - 40, r.bottom - 42)}px`;
+    floorsEl.style.left = `${Math.max(8, Math.round((innerWidth - w) / 2))}px`;
+    floorsEl.style.bottom = '14px';
+    floorsEl.style.top = 'auto';
   }
 
-  function renderOverlay() {
-    const el = overlay();
-    if (!el) { if (overlayEl) { overlayEl.remove(); overlayEl = null; } return; }
-    // Yahoo's autopick dialog carries no role=dialog, so match it by text.
-    const dlg = [...document.querySelectorAll('div,section')]
-      .some((e) => /autopick mode|inactivity/i.test(e.innerText || '') && (e.innerText || '').length < 400);
-    if (dlg) { el.style.display = 'none'; return; }
-    el.style.display = '';
 
-    const esc = (t) => String(t ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-    const badge = queueCount();
-    // state.queue is itself a live read, refreshed every tick; prefer an even
-    // fresher one when the Queue tab happens to be open right now.
-    const live = liveQueue();
-    const model = queueView();
-    const source = live ? 'live' : 'synced';
-    const q = live
-      ? live.map((p) => Object.assign({}, p,
-          model.find((m) => m.name === p.name && m.pos === p.pos) || {}))
-      : model;
-    const next = state.armed ? planQueue(3) : [];
-
-    const row = (p, label, dim, yours) => {
-      const bits = [];
-      if (p.val === null) bits.push('no longer available');
-      else {
-        const repl = p.proj - (Number.isFinite(p.raw) ? p.raw : 0);
-        bits.push(`scores ${Math.round(p.proj)}`);
-        bits.push(`${Math.round(repl)} if you wait`);
-        if (p.playoffMod && Math.abs(p.playoffMod - 1) > 0.0005) {
-          bits.push(`playoff ×${p.playoffMod.toFixed(3)}`);
-        }
-        if (p.role === 'starter') bits.push(`fills ${p.pos} slot`);
-        else if (p.role === 'flex') bits.push('fills flex');
-        else if (p.role === 'reserve') bits.push('bench only');
-        else if (p.role === 'must-fill') bits.push(`must fill ${p.pos}`);
-
-        if (p.byeMod && p.byeMod < 1) bits.push(`bye clash −${((1 - p.byeMod) * 100).toFixed(0)}%`);
-        if (p.teamMod && p.teamMod < 1) bits.push(`teammate −${((1 - p.teamMod) * 100).toFixed(0)}%`);
-        // Ranked-up for depth, but the GAIN shown stays the honest figure.
-        if (p.depthMult && p.depthMult > 1) {
-          bits.push(`bench depth +${Math.round((p.depthMult - 1) * 100)}% (rank only)`);
-        }
-        if (p.gated) bits.push('held until the last rounds');
-      }
-      return `<div style="display:flex;gap:6px;margin-top:4px;opacity:${dim ? 0.6 : 1}">` +
-        `<span style="color:#7c8894;width:11px">${label}</span>` +
-        `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">` +
-        `${esc(p.name)} <span style="color:#7c8894">${esc(p.pos)}${p.team ? '-' + esc(p.team) : ''}</span>` +
-        `${yours ? ' <span style="color:#e0a340" title="you added this; never removed">◆</span>' : ''}</span>` +
-        `<span style="color:${p.val > 0 ? '#5cb585' : '#7c8894'};text-align:right;width:44px">` +
-        `${!Number.isFinite(p.val) ? (p.val === Infinity ? 'MUST' : '—')
-           : (p.val > 0 ? '+' : '') + p.val.toFixed(1)}</span>` +
-        // Playoff schedule shown separately, never folded into the value above.
-        `<span style="text-align:right;width:38px;color:${!p.playoffDelta ? '#7c8894'
-          : p.playoffDelta > 0 ? '#5cb585' : '#e27a72'}">` +
-        `${!Number.isFinite(p.playoffDelta) || !p.playoffDelta || !Number.isFinite(p.val) ? ''
-          : (p.playoffDelta > 0 ? '+' : '−') + Math.abs(p.playoffDelta).toFixed(1)}</span></div>` +
-        `<div style="color:#7c8894;margin-left:17px;opacity:${dim ? 0.6 : 1}">${bits.join(' · ')}</div>`;
-    };
-
-    const busy = state.working
-      ? `<div style="background:#e0a340;color:#12151a;font-weight:700;text-align:center;` +
-        `margin:-9px -11px 7px;padding:5px 0;border-radius:7px 7px 0 0">` +
-        `UPDATING QUEUE — HANDS OFF</div>` : '';
-
-    el.innerHTML = busy +
-      `<div style="display:flex;justify-content:space-between;border-bottom:1px solid #2b333c;padding-bottom:5px">` +
-      `<b>QUEUE</b><span style="color:#7c8894">${q.length}/${CFG.QUEUE_SIZE}` +
-      `${source === 'synced' ? ' <span style="color:#7c8894">(synced)</span>' : ''}` +
-      `${badge !== q.length ? ` <span style="color:#e27a72">badge ${badge}</span>` : ''}</span></div>` +
-      `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
-      `<span style="flex:1">PLAYER</span><span style="width:44px;text-align:right">GAIN</span>` +
-      `<span style="width:38px;text-align:right">SCHED</span></div>` +
-      (q.length ? q.map((p, i) => row(p, i + 1, false, false)).join('')
-                : '<div style="color:#7c8894;margin-top:4px">empty</div>') +
-      (next.length ? `<div style="color:#7c8894;border-top:1px dashed #2b333c;margin-top:7px;padding-top:4px">NEXT UP</div>` +
-        next.map((p) => row(p, '·', true, false)).join('') : '') +
-      `<div style="color:#7c8894;border-top:1px solid #2b333c;margin-top:7px;padding-top:5px">` +
-      `<b style="color:#e0a340">◆</b> = you queued this; never removed automatically.<br>` +
-      `<b style="color:#5cb585">SCHED</b> = points the fantasy-playoff schedule adds or ` +
-      `removes. Kept out of GAIN so the headline stays comparable, but it does count ` +
-      `toward queue order.<br>` +
-      `<b style="color:#a7b2bd">GAIN</b> = season points you gain by taking this player ` +
-      `now instead of the best one at his position still likely to be there at your ` +
-      `next pick. Adjusted down if he can only sit on your bench, and for playoff ` +
-      `schedule and bye-week clashes.` +
-      `<div style="margin-top:3px">pool ${state.pool.size} · drafted ${state.taken.size} · ` +
-      `<span style="color:${autodraftOn() ? '#e27a72' : '#5cb585'}">autodraft ${autodraftOn() ? 'ON' : 'off'}</span></div></div>`;
-  }
 
   const timer = setInterval(tick, CFG.TICK_MS);
   // Own timer: the overlay is read-only and must never be starved by a slow tick —
@@ -2845,7 +2736,7 @@
 
   let paintErr = null;
   const overlayTimer = setInterval(() => {
-    try { renderOverlay(); renderFloors(); annotateQueue(); }
+    try { renderFloors(); annotateQueue(); }
     catch (e) {
       // Never swallow silently: a throw here previously left the overlay blank
       // with no explanation anywhere.
@@ -2854,7 +2745,7 @@
   }, 1000);
   window.__queueStop = () => { clearInterval(timer); clearInterval(overlayTimer); clearInterval(autopickTimer);
     if (floorsEl) { floorsEl.remove(); floorsEl = null; }
-    dialogObserver.disconnect(); if (overlayEl) overlayEl.remove();
+    dialogObserver.disconnect();
     document.querySelectorAll('.ys-assist').forEach((e) => e.remove());   // leave the queue clean
     say('stopped'); };
   window.__queueState = state;

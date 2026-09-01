@@ -2849,6 +2849,25 @@
       if (here < target) continue;                       // not reached yet
       if (state.realised.some((r) => r.target === target)) continue;   // already scored
 
+      // The picks PANEL lags our own clock, and the tick does not sync it while
+      // our turn is running (Q8). Scoring fires the moment `here` reaches the
+      // horizon — which is our own turn — so it used to grade against a feed that
+      // had not caught up, and every number came out wrong in a predictable
+      // direction: `actualMix` counted only the handful of picks read so far, and
+      // `best[pos]` still counted drafted players as available, inflating the
+      // floor error. Live at pick 42 it scored 3 of the 29 picks in the window and
+      // reported mix QB -1, RB -12, WR -7, TE -4; the same horizon against the
+      // complete feed was QB 0, RB -2, WR +4, TE -1 — a good forecast graded as a
+      // disaster.
+      //
+      // Wait until the panel has been read through the horizon. seenPickNos only
+      // ever grows, so this cannot stall; the delay lands in `lateBy`, which is
+      // already reported. Requiring pickPos to be COMPLETE would stall, because
+      // players inferred as drafted ("has no row") never get a pick number.
+      const syncedTo = state.seenPickNos && state.seenPickNos.size
+        ? Math.max(...state.seenPickNos) : -Infinity;
+      if (syncedTo < target) continue;
+
       const best = {};
       for (const p of state.pool.values()) {
         const k = key(p.name, p.pos);

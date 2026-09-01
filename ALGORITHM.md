@@ -214,6 +214,22 @@ position is recorded and compared with what that projection predicted.
 Measured **at** the target, not whenever we next look. Reading late understates
 every floor, because more players have gone: one running-back error read −19.8
 when measured twelve picks late, against an exact result at the horizon before it.
+
+But "at the target" must mean *at the target with the board actually read*. The
+horizon is reached on our own turn, and the picks panel does not sync while our
+clock runs (Q8), so scoring used to grade against a feed that had not caught up —
+biasing every number the same way, since `actualMix` saw only the few picks read
+so far and `best[pos]` still counted drafted players as available. At pick 42 it
+graded **3 of the 29 picks** in the window and reported `mix QB −1, RB −12,
+WR −7, TE −4`; the same horizon against the complete feed was `QB 0, RB −2,
+WR +4, TE −1`. A good forecast was recorded as a bad one. Scoring now waits until
+`max(seenPickNos) ≥ target`, which only ever advances, so it cannot stall; any
+delay lands in `lateBy`, which is already reported. Requiring `pickPos` to be
+complete would stall instead, because a player inferred as drafted ("has no row")
+never gets a pick number.
+
+**Every accuracy figure recorded before this fix is unreliable and should be
+discarded**, including the two reference horizons below.
 Each row keeps the round it was projected from, the round it landed in, and how
 late it was scored, because *where* in the draft a position is mispredicted is
 likely to matter more than any average bias.

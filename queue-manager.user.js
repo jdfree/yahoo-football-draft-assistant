@@ -76,6 +76,10 @@
     // 84.56 a 120-point tight end scores +35 — and the model duly predicted 17
     // tight ends in 30 picks. Nobody drafts like that. QB keeps 2, where a genuine
     // backup market exists.
+    //
+    // QB was briefly dropped to 1 on the theory that a 14-QB forecast in round 9
+    // had to be wrong. It wasn't: in a 14-team league the flex pool is picked thin
+    // by then, and the second quarterback really is the rational pick. Leave it.
     SIM_ROSTER_LIMITS: { QB: 2, TE: 1, K: 1, DEF: 1 },
 
 
@@ -2291,18 +2295,23 @@
     // The DELTA, and nothing more: an entry goes only if the plan no longer wants
     // him. Most of a settled queue is still exactly right, and a rebuild should
     // leave those rows untouched.
+    //
+    // An entry is dropped for one reason only: the plan no longer wants him.
+    // Being in the wrong SEAT is never a reason. Order is repaired by dragging,
+    // in reorderQueue below — removing a player to re-add him lower is the one
+    // thing the queue must never do.
+    //
+    // This used to doom every entry after the first out-of-order seat
+    // (`doomedList = ours.slice(good)`), which quietly deleted players the plan
+    // still wanted. They were not in `missing` — they were present when the delta
+    // was computed — so nothing re-added them until the NEXT cycle. Live: the top
+    // quarterback on the board was queued, evicted for sitting one seat low, and
+    // was still gone when our turn arrived.
     const unavailable = (pl) => state.taken.has(key(pl.name, pl.pos));
-    let doomedList = allowReorder
+    const wrong = allowReorder
       ? ours.filter((pl) => !keep.has(key(pl.name, pl.pos)))
       : ours.filter(unavailable);
-    let good = ours.length - doomedList.length;
-    if (CFG.ENFORCE_QUEUE_ORDER && allowReorder) {
-      good = 0;
-      while (good < ours.length && good < planKeys.length
-             && key(ours[good].name, ours[good].pos) === planKeys[good]) good++;
-      doomedList = ours.slice(good);
-    }
-    const wrong = doomedList;
+    const good = ours.length - wrong.length;
     const present0 = new Set(current.map((pl) => key(pl.name, pl.pos)));
     const missing = plan.filter((pl) => !present0.has(key(pl.name, pl.pos)));
     if (!wrong.length && !missing.length) return 0;   // nothing to do; touch nothing

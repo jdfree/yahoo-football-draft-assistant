@@ -675,7 +675,11 @@
     try { localStorage.setItem(`ys_ours_${roomId()}`, JSON.stringify([...state.ours])); }
     catch (e) { /* private browsing */ }
   }
-  const isOurs = (p) => state.ours.has(key(p.name, p.pos));
+  // TRUE when the ASSISTANT queued this player. A queue entry the human added is
+  // therefore `!weQueued(p)` — the name isOurs read the other way round to half
+  // the call sites and inverted a removal predicate, which made the assistant's
+  // own stale entries permanent while targeting the human's.
+  const weQueued = (p) => state.ours.has(key(p.name, p.pos));
 
   function foldPicks() {
     let n = 0;
@@ -1498,21 +1502,27 @@
     // defenses on the roster before it was caught.
     const queued = (seed || queueView()).filter((p) => p && p.pos && p.pos !== '?');
     const chosen = [];
-    const sequence = queued.slice();
 
-    // Count what the queue already holds, so limits apply across the whole queue.
+    // Roles are judged against the roster you ACTUALLY have, not the roster you
+    // would have if the whole queue came true. Treating queued players as already
+    // rostered filled the notional starting lineup, after which a kicker and a
+    // defense still scored at full starter weight while every further RB and WR
+    // dropped to bench weight — so a K and a DEF landed in the queue in round 1
+    // with starting RB and TE unfilled and far better players available.
+    //
+    // Stacking is held off by the position limits below, which DO count the whole
+    // queue; that is what the seeding was really protecting against.
     const posCount = {};
     for (const p of queued) posCount[p.pos] = (posCount[p.pos] || 0) + 1;
 
     while (chosen.length < n) {
-      const ranked = rankAvailable(sequence)
+      const ranked = rankAvailable(chosen)
         .filter((p) => !chosen.some((c) => c.id === p.id))
         .filter((p) => !p.gated)                       // late-round gate applies here
         .filter((p) => (posCount[p.pos] || 0) < positionLimit(p.pos, b2b));
       if (!ranked.length) break;
       const pick = ranked[0];
       chosen.push(pick);
-      sequence.push(pick);
       posCount[pick.pos] = (posCount[pick.pos] || 0) + 1;
       if (chosen.length === 1 && !queued.length && !b2b && isScarce(pick.pos, roster())) {
         const backup = rankAvailable([]).find((p) => p.pos === pick.pos && p.id !== pick.id);
@@ -1701,7 +1711,7 @@
     }
 
     // Never remove what the human queued themselves.
-    const yours = view.filter((p) => bad.has(`${p.name}|${p.pos}`) && !isOurs(p));
+    const yours = view.filter((p) => bad.has(`${p.name}|${p.pos}`) && !weQueued(p));
     if (yours.length) {
       say(`leaving your own entries alone: ${yours.map((p) => p.name).join(', ')}`);
       yours.forEach((p) => bad.delete(`${p.name}|${p.pos}`));
@@ -1742,10 +1752,9 @@
     const planKeys = plan.map((p) => key(p.name, p.pos));
     const keep = new Set(planKeys);
 
+    // Only entries the ASSISTANT queued are ours to move; the human's stay put.
     const current = queueView().filter((pl) => pl && pl.pos && pl.pos !== '?');
-    const mineIdx = new Set();                    // positions holding the human's own picks
-    current.forEach((pl, i) => { if (isOurs(pl)) mineIdx.add(i); });
-    const ours = current.filter((pl, i) => !mineIdx.has(i));
+    const ours = current.filter((pl) => weQueued(pl));
 
     // How much of the queue already reads as the plan does?
     let good = 0;
@@ -1756,7 +1765,7 @@
     if (!wrong.length) return 0;                  // in order and complete: touch nothing
     const doomed = new Set(wrong.map((pl) => key(pl.name, pl.pos)));
 
-    const out = await removeFromQueue((pl) => !isOurs(pl) && doomed.has(key(pl.name, pl.pos)));
+    const out = await removeFromQueue((pl) => weQueued(pl) && doomed.has(key(pl.name, pl.pos)));
     if (out.length) {
       const why = wrong.filter((pl) => !keep.has(key(pl.name, pl.pos))).length;
       say(`reconciled: dropped ${out.length} (${why} outranked, ${out.length - why} out of order),` +
@@ -2238,7 +2247,7 @@
       `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
       `<span style="flex:1">PLAYER</span><span style="width:44px;text-align:right">GAIN</span>` +
       `<span style="width:38px;text-align:right">SCHED</span></div>` +
-      (q.length ? q.map((p, i) => row(p, i + 1, false, !isOurs(p))).join('')
+      (q.length ? q.map((p, i) => row(p, i + 1, false, !weQueued(p))).join('')
                 : '<div style="color:#7c8894;margin-top:4px">empty</div>') +
       (next.length ? `<div style="color:#7c8894;border-top:1px dashed #2b333c;margin-top:7px;padding-top:4px">NEXT UP</div>` +
         next.map((p) => row(p, '·', true, false)).join('') : '') +

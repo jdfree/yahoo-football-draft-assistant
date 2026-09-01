@@ -81,7 +81,15 @@ exists only among reserves (V6).
 | --- | --- |
 | starter | the floor at his own position — the best player expected to survive to O2 |
 | flex | the **highest** floor across RB/WR/TE — a flex slot is contested by all three, so passing on a tight end leaves you the best flex-eligible player, not another tight end |
-| reserve | the floor from the **deepest** horizon projected — a bench player competes for a late pick, not this one |
+| reserve, RB/WR/TE | **V14** — the **flex floor**: the highest floor across RB, WR and TE at the deepest horizon. All three end up competing for the same flex spot, so the alternative to taking one is not "another back" but "the best of the three" |
+| reserve, other | the floor at his own position, from the deepest horizon projected |
+
+**V14 in practice.** Measuring each bench player against his own position's floor
+let a back with a collapsed RB floor (101.1) show +37.5, and at `0.2 × 2 = 0.4`
+that was enough to outrank a receiver filling an open *starting* slot whose raw
+points were higher. Against the flex floor of 135.0 the same back is worth +3.6,
+and the receiver is unchanged at 12.00. Starting slots keep their own position's
+floor — a WR slot can only be filled by a receiver.
 
 **V13 — the floor is clamped to the board.** A floor claims "this good a player
 will still be there later", and the pool only shrinks, so the claim is refuted the

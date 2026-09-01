@@ -1529,8 +1529,31 @@
       // impossible to compare with a skill player's.
       if (role === 'reserve') {
         const deep = deepestFloors();
-        const survivor = deep && deep[pos] && deep[pos].find((p) => p.id !== exceptId);
-        if (survivor) return survivor.proj;
+        if (deep) {
+          /**
+           * V14 — a bench RB, WR or TE is measured against the FLEX floor: the
+           * best flex-eligible player expected to survive, whichever position he
+           * plays. All three end up competing for the same flex spot, so the
+           * alternative to taking one is not "another back" but "the best of the
+           * three".
+           *
+           * Measuring each against his own position's floor let a bench back with
+           * a collapsed RB floor (101.1) show +37.5 while a receiver filling an
+           * open STARTING slot showed far less, and at 0.2 x 2 = 0.4 that was
+           * enough to put reserves above a starter whose raw points were higher.
+           * Against the flex floor of 135.0 the same back is worth +3.6.
+           *
+           * Starting slots keep their own position's floor — a starting WR slot
+           * can only be filled by a receiver, so the flex bar does not apply.
+           */
+          const positions = FLEX_POS.includes(pos) ? FLEX_POS : [pos];
+          let bar = null;
+          for (const q of positions) {
+            const survivor = deep[q] && deep[q].find((p) => p.id !== exceptId);
+            if (survivor && (bar === null || survivor.proj > bar)) bar = survivor.proj;
+          }
+          if (bar !== null) return bar;
+        }
       }
 
       if (projected && projected.byPos[pos]) {

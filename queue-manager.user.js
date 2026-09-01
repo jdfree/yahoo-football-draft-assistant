@@ -806,9 +806,18 @@
    * The "subsequent pick": the one AFTER our next pick, unless our next two are
    * consecutive, in which case it is the one after that pair. This is the horizon
    * over which a position can realistically be stripped.
+   *
+   * It counts from the pick AFTER the one being decided. Counting from the current
+   * pick made ourNextPickAfter return that very pick — the decision in hand — and
+   * the horizon collapsed by a full round: deciding at pick 9 looked only to pick
+   * 20, our round-2 pick, instead of 37 in round 3. Every candidate was then priced
+   * against a one-round horizon, which badly understates how far a position gets
+   * stripped, and running backs suffer most. Live consequence: a QB topped the
+   * round-1 queue because passing on him cost 28 points against round 2, while the
+   * running backs' true cost against round 3 went unmeasured.
    */
   function subsequentPick(currentPick) {
-    const first = ourNextPickAfter(currentPick);
+    const first = ourNextPickAfter(currentPick + 1);
     const second = ourNextPickAfter(first + 1);
     return (second === first + 1) ? ourNextPickAfter(second + 1) : second;
   }
@@ -1714,11 +1723,45 @@
    * so current contents get no incumbency), keep whatever still earns its place,
    * and drop only the rest. Refill closes the gap.
    */
-  async function purgeQueue() {
+  /**
+   * Bring the queue back in line with the current plan, in BOTH membership and
+   * order. Yahoo drafts from the top when your clock expires, so the order is not
+   * cosmetic — it is the decision.
+   *
+   * Refills append, so after a few top-ups the queue holds the right players in
+   * the wrong sequence. Rather than rebuild wholesale, keep the longest prefix
+   * that already matches the plan and redo only the tail: if nothing has changed
+   * the cost is zero clicks, and a single better player arriving costs one
+   * removal and one add rather than eight of each.
+   *
+   * Entries the human added are never touched and never counted as out of place.
+   */
+  async function reconcileQueue() {
     const plan = planQueue(CFG.QUEUE_SIZE, []);
-    const keep = new Set(plan.map((p) => key(p.name, p.pos)));
-    const out = await removeFromQueue((pl) => !isOurs(pl) && !keep.has(key(pl.name, pl.pos)));
-    say(`rebuild: kept ${queueCount()}, dropped ${out.length}`);
+    if (!plan.length) return 0;
+    const planKeys = plan.map((p) => key(p.name, p.pos));
+    const keep = new Set(planKeys);
+
+    const current = queueView().filter((pl) => pl && pl.pos && pl.pos !== '?');
+    const mineIdx = new Set();                    // positions holding the human's own picks
+    current.forEach((pl, i) => { if (isOurs(pl)) mineIdx.add(i); });
+    const ours = current.filter((pl, i) => !mineIdx.has(i));
+
+    // How much of the queue already reads as the plan does?
+    let good = 0;
+    while (good < ours.length && good < planKeys.length
+           && key(ours[good].name, ours[good].pos) === planKeys[good]) good++;
+
+    const wrong = ours.slice(good);
+    if (!wrong.length) return 0;                  // in order and complete: touch nothing
+    const doomed = new Set(wrong.map((pl) => key(pl.name, pl.pos)));
+
+    const out = await removeFromQueue((pl) => !isOurs(pl) && doomed.has(key(pl.name, pl.pos)));
+    if (out.length) {
+      const why = wrong.filter((pl) => !keep.has(key(pl.name, pl.pos))).length;
+      say(`reconciled: dropped ${out.length} (${why} outranked, ${out.length - why} out of order),` +
+          ` kept ${good}`);
+    }
     await clearFilters();
     return out.length;
   }
@@ -2042,9 +2085,14 @@
       // inside the ranking that planQueue calls for every queue slot.
       await ensureProjection(draftPosition().overall);
 
-      // Our own pick invalidates the queue's premise: the roster changed, so
-      // every queued player was chosen against needs that no longer hold.
-      if (weDrafted) { state.lastRoster = rc; await purgeQueue(); }
+      // Keep the queue honest against the CURRENT board, not just after our own
+      // picks. Entries were only ever added, and pruneQueue drops the illegal —
+      // never the merely outdated — so a defense queued in round 1 at +3.5 sat
+      // there into round 2 while a receiver worth +25.6 went unqueued. Every pick
+      // by anyone changes what is available, so the plan is reconciled each cycle.
+      // The rebuild is a diff: whatever still earns its place stays put.
+      if (weDrafted) state.lastRoster = rc;
+      await reconcileQueue();
 
       // Flag the overlay while we click around the queue UI, so the human knows to
       // keep hands off rather than fighting us for the mouse.

@@ -114,12 +114,22 @@ the model concluding that passing on him would leave him available.
 
 From the most recent actual pick through our **subsequent pick**, defined as:
 
-- normally, the pick *after* our next pick;
+- normally, the pick *after* our next pick, counting from the pick after the one
+  being decided;
 - if our next two picks are consecutive (only possible at the turn, when the snake
   gap is 1), the pick after that *pair*.
 
 The point is to look one real decision beyond our imminent one, because that is
-the horizon over which a position can be stripped.
+the horizon over which a position can be stripped. Deciding in round 1 therefore
+looks to our **round 3** pick, not round 2.
+
+Counting from the current pick instead got this wrong by a full round, because
+"our next pick" then resolved to the decision in hand: at slot 9 of 14, deciding
+at pick 9 looked only as far as pick 20 rather than 37. Every candidate was priced
+against a one-round horizon, which understates how far a position gets stripped
+and penalises running backs most. Live consequence: a quarterback topped the
+round-1 queue on a 28-point edge measured against round 2, while the running
+backs' real cost against round 3 was never measured.
 
 ### How each team picks
 

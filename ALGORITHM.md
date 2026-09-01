@@ -39,7 +39,7 @@ in one live draft purely because thirty-five players had been drafted in between
 | **O7** | Bench fallback | If O5 minus O6 leaves nothing — the usual mid-draft case, where a team's only gaps are K and DEF — the team considers **all** positions and takes bench depth. Without this those teams drafted nobody: a 38-pick horizon simulated 2 picks. | — |
 | **O8** | Bye limit | A team will not take a third player at one position sharing a bye week. | — |
 | **O9** | Score | `score = projection × O10 − bar[position]`, where the **bar rolls forward**: the first projection of a draft uses the static baseline S4, and every projection after it uses the floors from the most recent *completed* projection. The bar therefore tracks the board instead of staying pinned to preseason. Resolved once before any pick is simulated and passed down, and this run's floors are not stored until it returns — so a projection can never read itself. | `S4` seeds it |
-| **O10** | Bench RB/WR boost | In bench mode (O7), an RB's or WR's **projection** is inflated by this fraction. Applied to the projection, not the surplus: scaling a surplus inverts once it goes negative, which pushed backs *down* the board. Applies equally to RB and WR, so it does not by itself favour one over the other. | `BENCH_RB_WR_BOOST: 0.10` |
+| **O10** | Bench RB/WR multiplier | In bench mode (O7), an RB's or WR's **score** is multiplied — the same mechanism and the same knob as V6, so the two models cannot drift apart and one fix serves both. Scaling a surplus inverts once it goes negative; with the rolling bar (O9) that is the wanted behaviour rather than a defect, since a negative score means the position is picked over and doubling it pushes RB and WR further down. | `BENCH_RB_WR_MULTIPLIER: 2` (shared with V6) |
 | **O11** | *(retired)* | There is no floor on the score. Clamping negatives to `+1` made every candidate below the bar exactly equal, so O12 stopped breaking ties and made the entire decision — 24 of 30 late picks went to running back, and with the rolling bar of O9 whole rounds went to a single position. A pick still happens: the best of several negative scores is still the best. | — |
 | **O12** | Tie-break | Ties go to running back. | — |
 | **O13** | Roster caps | A team will not exceed `CAPS[pos]` at any position. | `CAPS` |
@@ -152,8 +152,7 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `WEIGHT_STARTER` | 1.0 | V5a |
 | `WEIGHT_FLEX` | 0.9 | V5b |
 | `WEIGHT_RESERVE` | 0.2 | V5c |
-| `BENCH_RB_WR_MULTIPLIER` | 2 | V6 |
-| `BENCH_RB_WR_BOOST` | 0.10 | O10 |
+| `BENCH_RB_WR_MULTIPLIER` | 2 | V6 **and** O10 |
 | `OPPONENT_LATE_K_DEF` | 2 | O6 |
 | `PROJECT_AT_PICKS_AWAY` | 3 | O1 |
 | `SAME_TEAM_PENALTY` | 0 | V7 |
@@ -178,8 +177,12 @@ best player still available there.
 - **The opponent mix (O9–O12).** 23 running backs in 32 simulated picks. Every
   floor rests on this and nothing else constrains it now that S4 is out of our
   bar. Cause not yet identified — O10 is ruled out.
-- **V6 with negative surplus.** The multiplier scales the surplus, so once a bench
-  RB/WR goes negative it ranks him *below* an equally negative backup QB. Moving
-  it onto the projection, as O10 does, would avoid this.
+- **V6 / O10 with negative surplus.** The multiplier scales the surplus, so once a
+  bench RB/WR goes negative it ranks him *below* an equally negative backup QB. In
+  the opponent model this is now deliberate — a negative score means the position
+  is picked over. On our side it is still an open question.
+- **The O10 change is unmeasured.** Offline simulation cannot evaluate it: O10 is
+  gated on bench mode, which depends on team rosters, and a synthetic harness has
+  none. Only a live mock will show whether it moves the predicted mix.
 - **Floors are lost on reload.** `state.floors` is in memory, so the deepest
   horizon that V2 reads for reserves resets when the script reloads.

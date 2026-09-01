@@ -51,13 +51,15 @@
     // receiver, where a reserve counts twice as much as a reserve elsewhere (an
     // effective 0.4). Lowered from three, to prefer backs less.
     //
-    // NOTE: this knob is OURS only. The opponent simulation uses
-    // BENCH_RB_WR_BOOST, a projection boost applied equally to RB and WR, so
-    // changing this does not alter how many backs the model predicts will be
-    // drafted, and therefore does not move the floors. Bench depth genuinely matters at those positions: you
-    // start two of each plus a flex and they miss time most often, whereas a backup
-    // quarterback behind an established starter is worth almost nothing however
-    // large his nominal surplus.
+    // Bench depth genuinely matters at those positions: you start two of each plus
+    // a flex and they miss time most often, whereas a backup quarterback behind an
+    // established starter is worth almost nothing however large his nominal
+    // surplus.
+    //
+    // The SAME knob drives O10 in the opponent simulation, so changing it moves
+    // both our preference and the predicted attrition behind the floors. It used
+    // to be ours alone, with the simulation on a separate projection boost; the
+    // two mechanisms could drift apart and one of them was always the wrong one.
     //
     // This is what separates the cases seen live: a back worth +35.5 on the bench
     // scores 21.3 and beats a kicker worth +7.58 filling an empty slot, while a
@@ -134,17 +136,6 @@
     VETO_AFTER: 3,
 
     // --- backup depth at RB/WR ----------------------------------------------
-    // How much to inflate an RB's or WR's PROJECTION when he is being valued as a
-    // bench player, as a fraction. Used both for our own queue and inside the
-    // opponent simulation. Bench depth matters more at those positions:
-    // you start two of each plus a flex, and they miss time most often.
-    //
-    // This is deliberately a boost to the projection rather than a multiplier on
-    // the surplus. Multiplying the surplus inverts once the surplus goes negative,
-    // which is where most bench players sit by the late rounds, and it pushed RB
-    // and WR down the queue instead of up. It never touches the displayed number —
-    // only the ordering.
-    BENCH_RB_WR_BOOST: 0.10,
 
     // How many rounds from the end an OPPONENT is assumed to consider a kicker or
     // defense. A kicker scores positive against baseline from round one, so
@@ -915,14 +906,17 @@
       if (fillingStarters && !fillable.has(p.pos)) continue;
       if ((CFG.CAPS[p.pos] || 99) <= roster.filter((r) => r.pos === p.pos).length) continue;
 
-      // Bench depth at RB and WR boosts the PROJECTION, not the surplus — the same
-      // correction already made on our own side of the model. Multiplying a surplus
-      // scales whatever is there, so a back sitting far above baseline was
-      // tripled while a receiver sitting just below baseline floored at 1 and could
-      // never win. The simulation drafted 28 running backs and no receivers in 31
-      // picks, which collapsed the RB floor and inflated every back's surplus.
-      const boost = (!fillingStarters && (p.pos === 'RB' || p.pos === 'WR'))
-        ? 1 + CFG.BENCH_RB_WR_BOOST : 1;
+      // Bench depth at RB and WR multiplies the SCORE, exactly as V6 does on our
+      // side — same mechanism, same knob, so the two models cannot drift apart and
+      // one fix serves both.
+      //
+      // The objection to scaling a surplus was that it inverts once the surplus
+      // goes negative. That is no longer a defect here but the desired behaviour:
+      // with the rolling bar (O9) a negative score means the position is picked
+      // over, and doubling it pushes RB and WR further down rather than further up.
+      // Early, where surpluses are positive, it lifts them as intended.
+      const mult = (!fillingStarters && (p.pos === 'RB' || p.pos === 'WR'))
+        ? CFG.BENCH_RB_WR_MULTIPLIER : 1;
       // No floor. Clamping negative scores to +1 destroyed the ordering among them:
       // every candidate below the bar became exactly equal, so the tie-break below
       // stopped breaking ties and made the whole decision. Late in a draft that put
@@ -930,7 +924,7 @@
       // the board by construction, it was worse still — entire rounds went to one
       // position. A pick still happens regardless, because the best of several
       // negative scores is still the best.
-      const score = p.proj * boost - (base[p.pos] ?? p.proj);
+      const score = (p.proj - (base[p.pos] ?? p.proj)) * mult;
       // Ties go to running back.
       if (score > bestScore || (score === bestScore && p.pos === 'RB' && best && best.pos !== 'RB')) {
         best = p; bestScore = score;

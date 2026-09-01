@@ -1,0 +1,181 @@
+# Algorithm reference
+
+Every factor is labelled so it can be named directly — "raise **O10**", "**V6** is
+too strong". Labels are stable; if a factor is removed its label is retired
+rather than reused.
+
+There are two valuations, and they are not the same. **We** value a player by
+what we gain by taking him now instead of waiting. **Opponents** are modelled by
+value over a replacement-level starter. The two meet only at the floors: the
+opponent model predicts who disappears, and what survives becomes our bar.
+
+---
+
+## A. Setup — once per draft
+
+| # | Factor | What it does |
+| --- | --- | --- |
+| **S1** | Pool read | Six position sweeps of the player table, top 100 each. Captures Yahoo id, name, position, NFL team, projected points, ADP, bye. Projections are already scored under this league's rules, so scoring settings never have to be known. Read once — none of it changes during a draft. |
+| **S2** | Drafted read | Yahoo's `Drafted` pill widens the table to include players already taken. Swept the same way and merged into the pool **by id**, so arming mid-draft still sees the whole league. Names collide (two `J. Daniels` at QB, two `B. Robinson` at RB), so id is the only safe key. |
+| **S3** | League shape | Slot comes from the draft-room URL. Team count is *counted*, from the draft-order strip: a snake mirrors at the turn (`… Hugh, Ira, Ira, Hugh …`) and the mirror position is the team count. Verified by checking the first `2T` entries read the same in both directions. Fallback, if the strip is absent: every `ROUND r, PICK n` constrains `T` via `(r−1)·T < n ≤ r·T`, which resolves at the first pick of round 2. |
+| **S4** | Baseline | The **worst starting-calibre projection at each position**. Computed once and never recomputed. Sort every player (S1 + S2) by projection; fill `STARTERS[pos] × TEAMS` dedicated slots top-down; then fill `FLEX × TEAMS` from the best remaining RB/WR/TE; `baseline[pos]` is the lowest projection assigned to that position. **Used only by the opponent model (O9).** It no longer sets our bar. |
+
+S4 is frozen because it describes the league's shape, not the current board.
+Recomputing it against a depleting pool walks it downward — RB fell 108.4 → 92.6
+in one live draft purely because thirty-five players had been drafted in between.
+
+---
+
+## B. Opponent projection — what disappears before our next-but-two pick
+
+| # | Factor | Rule | Config |
+| --- | --- | --- | --- |
+| **O1** | When it runs | Once per turn, when we are within N picks of being on the clock. Running it late is the point: it then reflects the picks that just happened, so a run on a position is priced in rather than averaged away. | `PROJECT_AT_PICKS_AWAY: 3` |
+| **O2** | Horizon | Our **third-from-next** pick, clamped to the final pick of the draft. Simulates every pick from now to that target. | — |
+| **O3** | Our own picks | Skipped, not simulated. We are predicting what is available *to us*, not boxing ourselves out. | — |
+| **O4** | Opponent rosters | Taken from the live Picks feed, which names the drafter for every pick. Real rosters, not assumptions. The simulation forks a copy; `state.teamRosters` only ever changes when a real pick is observed. | — |
+| **O5** | Open starting slots | A team considers only positions where it has an unfilled **dedicated** starting slot. | `STARTERS` |
+| **O6** | K/DEF late gate | Kickers and defenses are excluded until the last N rounds. A kicker scores positive against baseline from round one, so without this the model drafts them constantly — 11 kickers and 11 defenses in 29 picks, observed. | `OPPONENT_LATE_K_DEF: 2` |
+| **O7** | Bench fallback | If O5 minus O6 leaves nothing — the usual mid-draft case, where a team's only gaps are K and DEF — the team considers **all** positions and takes bench depth. Without this those teams drafted nobody: a 38-pick horizon simulated 2 picks. | — |
+| **O8** | Bye limit | A team will not take a third player at one position sharing a bye week. | — |
+| **O9** | Score | `score = projection × O10 − baseline[position]` | `S4` |
+| **O10** | Bench RB/WR boost | In bench mode (O7), an RB's or WR's **projection** is inflated by this fraction. Applied to the projection, not the surplus: scaling a surplus inverts once it goes negative, which pushed backs *down* the board. Applies equally to RB and WR, so it does not by itself favour one over the other. | `BENCH_RB_WR_BOOST: 0.10` |
+| **O11** | Floor | Any score below `+1` becomes `+1`. A pick happens regardless of how poor the board is. | — |
+| **O12** | Tie-break | Ties go to running back. | — |
+| **O13** | Roster caps | A team will not exceed `CAPS[pos]` at any position. | `CAPS` |
+| **O14** | Output | Per position, a ladder of up to **12** surviving players in projection order. The head of each ladder is that position's **floor**. Every horizon computed is retained, keyed by target pick. | — |
+
+**Known weakness.** The mix O9–O12 produces is only roughly right. A live round-7
+projection took 23 running backs out of 32 picks; earlier builds took 28 RB and
+zero WR, or 11 K and 11 DEF. Every floor depends on this, so it is the largest
+single assumption in the system. **O10 is not the cause** — it applies to RB and
+WR alike.
+
+---
+
+## C. Our valuation — every candidate, every ranking
+
+### C.1 Role (V1)
+
+| Condition | Role | Weight |
+| --- | --- | --- |
+| `count(pos) < STARTERS[pos]` | starter | **V5a** `WEIGHT_STARTER: 1.0` |
+| position is RB/WR/TE and a flex slot is open | flex | **V5b** `WEIGHT_FLEX: 0.9` |
+| otherwise | reserve | **V5c** `WEIGHT_RESERVE: 0.2` |
+
+No position is worth more than another *as a starter*. Positional preference
+exists only among reserves (V6).
+
+### C.2 The bar (V2)
+
+| Role | Bar |
+| --- | --- |
+| starter | the floor at his own position — the best player expected to survive to O2 |
+| flex | the **highest** floor across RB/WR/TE — a flex slot is contested by all three, so passing on a tight end leaves you the best flex-eligible player, not another tight end |
+| reserve | the floor from the **deepest** horizon projected — a bench player competes for a late pick, not this one |
+
+**V3 — self-exclusion.** A player is never his own replacement; the ladder (O14)
+is searched skipping his own id. Without it the best player at a position scored
+zero surplus and the model concluded that passing on him would leave him there.
+
+The worst-starter baseline (S4) is **not** part of the bar. Surplus over the floor
+means "what I gain by taking him now instead of waiting"; surplus over the
+baseline means "how much better than a replacement starter". Taking the greater of
+the two switched between those quantities silently.
+
+### C.3 Displayed value (V4)
+
+```
+V4  raw = projection − bar
+```
+
+This is the number shown in the queue, and it carries **no modifiers at all** —
+not role weight, not bye, not teammate, not bench multiplier, not playoff
+schedule. Everything below shapes the queue's *order* only.
+
+**Negative values are meaningful and expected.** Only the best available player at
+a position clears his own bar; anyone projecting below the floor reads negative,
+which correctly says the board will still offer someone better later.
+
+### C.4 Ordering (V10)
+
+```
+V10  sortVal = (projection × V7 − bar) × V5 × V6 × V8 × V9
+```
+
+| # | Factor | Rule | Config |
+| --- | --- | --- | --- |
+| **V6** | Bench RB/WR multiplier | A reserve RB or WR counts this many times a reserve elsewhere. Effective weight `0.2 × 2 = 0.4`. Depth matters more at those positions — two start plus a flex, and they miss time most often — while a backup QB behind a starter is worth almost nothing however large his nominal surplus. | `BENCH_RB_WR_MULTIPLIER: 2` |
+| **V7** | Same-team penalty | `(1 − p)^teammates` on the projection, compounding. Exempt for K and DEF. | `SAME_TEAM_PENALTY: 0` |
+| **V8** | Bye multiplier | `1 − BYE_FACTOR × min(1, clashes / starting slots at that position)`, where a clash is a player already held at the same position on the same bye. | `BYE_FACTOR: 0.5` |
+| **V9** | Playoff schedule | Per-NFL-team multiplier from ESPN FPI over the fantasy playoff weeks: `opponent defensive EPA − opponent offensive EPA`, averaged, scaled to a total swing. Shown beside the value as its own figure (`+1.1`, `−2.3`), never folded into V4. | `PLAYOFF_WEEKS: [15,16,17]`, `PLAYOFF_SWING: 0.10` |
+| **V11** | Must-fill override | When unfilled required positions ≥ picks remaining, only that position is offered, sorted by raw projection, at `sortVal = Infinity`. | `STARTERS`, roster size |
+| **V12** | Legality | A player is excluded outright once `CAPS[pos]` is reached on our roster. | `CAPS` |
+
+There is **no role tier**. Ranking is on `sortVal` alone, so role acts as a
+weight rather than a hard rule: a bench back worth +80 outranks a defense worth
++3.3 filling the last starting slot, while a mediocre bench back at +8 still loses
+to a genuine starting need.
+
+---
+
+## D. Queue mechanics
+
+| # | Factor | Rule | Config |
+| --- | --- | --- | --- |
+| **Q1** | Rebuild schedule | A full recompute of membership **and** order happens once per turn, `QUEUE_SIZE / 2` picks before we are on the clock — or whenever new floors land (O1), since those reprice every queued player. | `QUEUE_SIZE: 8` |
+| **Q2** | Back-to-back | When our next two picks fall inside the same window there is no chance to rebuild between them, so we build once, before the first. | — |
+| **Q3** | Between rebuilds | The queue is left alone entirely, apart from replacing players who have actually been drafted — one out, one in, appended. | — |
+| **Q4** | Delta, add-first | A rebuild adds every missing planned player **before** removing anything, and removes only entries the plan no longer wants. A rebuild can be cut short by our clock, and adding first means an interruption leaves more good players, never fewer. The queue may briefly exceed `QUEUE_SIZE`. | — |
+| **Q5** | Reorder by drag | Order is corrected by **dragging**, never by removing and re-adding. Queue rows carry dnd-kit handles with a documented keyboard protocol (space to lift, arrows to move, space to drop). Selection sort: at most one move per slot, and no player who belongs in the queue is ever removed from it. | `ENFORCE_QUEUE_ORDER: true` |
+| **Q6** | Position limits | No position may occupy more than `QUEUE_SIZE − 2` queue slots, so a run on one position cannot leave the whole queue useless. K and DEF are capped at 2, or 1 when our picks are back-to-back. | — |
+| **Q7** | Veto | Pull the same player out of the queue N times and he is never queued again. Detected in two passes: a disappearance is only *suspected*, then counted on the next pass once the picks feed has caught up and he is still undrafted — otherwise a player drafted a moment earlier is blamed on the human. | `VETO_AFTER: 3` |
+| **Q8** | Turn safety | Nothing touches the queue while our clock is running. Every loop checks and stops. | — |
+
+There is deliberately **no** "this entry is the human's" concept. Three attempts
+to infer it from the queue all produced false marks on players the assistant had
+queued itself, and the mark meant "never reorder, never remove", which froze them.
+A queue read cannot distinguish "you added this" from "this was already here"
+across a reload. Q7 is the one signal of intent that is reliable.
+
+---
+
+## E. Parameters
+
+| Config | Default | Governs |
+| --- | --- | --- |
+| `QUEUE_SIZE` | 8 | Q1, Q6 |
+| `STARTERS` | QB1 RB2 WR2 TE1 K1 DEF1 | S4, O5, V1, V11 |
+| `FLEX` | 1 | S4, V1 |
+| `CAPS` | QB2 RB6 WR7 TE3 K1 DEF1 | O13, V12 |
+| `WEIGHT_STARTER` | 1.0 | V5a |
+| `WEIGHT_FLEX` | 0.9 | V5b |
+| `WEIGHT_RESERVE` | 0.2 | V5c |
+| `BENCH_RB_WR_MULTIPLIER` | 2 | V6 |
+| `BENCH_RB_WR_BOOST` | 0.10 | O10 |
+| `OPPONENT_LATE_K_DEF` | 2 | O6 |
+| `PROJECT_AT_PICKS_AWAY` | 3 | O1 |
+| `SAME_TEAM_PENALTY` | 0 | V7 |
+| `BYE_FACTOR` | 0.5 | V8 |
+| `PLAYOFF_WEEKS` | 15, 16, 17 | V9 |
+| `PLAYOFF_SWING` | 0.10 | V9 |
+| `ENFORCE_QUEUE_ORDER` | true | Q5 |
+| `VETO_AFTER` | 3 | Q7 |
+| `LATE_ONLY` | *(empty)* | our own K/DEF gate, off — the math decides |
+| `AUTOPICK_AT_SECONDS` | 0 | last-second safety pick, off |
+
+`HORIZON_ROUNDS`, `SKIP_ROUNDS` and `ADP_SIGMA` survive only as fallbacks for the
+pre-projection ADP model and are unused while floors exist.
+
+---
+
+## F. Open questions
+
+- **The opponent mix (O9–O12).** 23 running backs in 32 simulated picks. Every
+  floor rests on this and nothing else constrains it now that S4 is out of our
+  bar. Cause not yet identified — O10 is ruled out.
+- **V6 with negative surplus.** The multiplier scales the surplus, so once a bench
+  RB/WR goes negative it ranks him *below* an equally negative backup QB. Moving
+  it onto the projection, as O10 does, would avoid this.
+- **Floors are lost on reload.** `state.floors` is in memory, so the deepest
+  horizon that V2 reads for reserves resets when the script reloads.

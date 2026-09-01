@@ -88,6 +88,12 @@ time the page fetches it, and blocks until you answer. Serving the two files fro
 any public HTTPS origin instead avoids the prompt entirely — set
 `window.YS_BASE` to point at it.
 
+## How it decides
+
+[ALGORITHM.md](ALGORITHM.md) is the full reference for both valuations — ours and
+the opponent model — with every factor labelled (S1–S4, O1–O14, V1–V12, Q1–Q8) so
+they can be named directly when tuning.
+
 ## Queue manager
 
 `queue-manager.user.js` (Tampermonkey) keeps the five best available players in

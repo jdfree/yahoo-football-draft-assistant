@@ -309,6 +309,54 @@
     return m && rd ? [{ pick: +rd[2] - 1, name: m[1].trim(), pos: m[2].toUpperCase() }] : [];
   }
 
+  /**
+   * Read the Picks feed as structured rows: overall number, drafting team, player.
+   *
+   * Team names are read from their own element and compared with string equality —
+   * never interpolated into a regex. Real rooms contain names like "I'm not Josh"
+   * (a smart apostrophe), "tar he-AL", "Jean-Philippe", and a team called simply
+   * "b"; any of those inside a pattern is a bug.
+   */
+  function scanPickRows() {
+    const out = [];
+    for (const el of document.querySelectorAll('.ys-player')) {
+      if (/ADP:/.test(el.innerText)) continue;             // queue entry, not a pick
+      const player = parsePlayer(el);
+      if (!player) continue;
+
+      // Climb to the row, then take its text lines: the pick number and the
+      // drafter sit alongside the player block.
+      let row = el;
+      for (let i = 0; i < 4 && row.parentElement; i++) {
+        row = row.parentElement;
+        if (/^\s*\d{1,3}\s/.test(row.innerText || '')) break;
+      }
+      const lines = (row.innerText || '').split('\n').map((x) => x.trim()).filter(Boolean);
+      const numIdx = lines.findIndex((l) => /^\d{1,3}$/.test(l));
+      if (numIdx < 0) continue;
+      const overall = +lines[numIdx];
+      // The drafter is the line after the number that is not part of the player block.
+      const drafter = lines.slice(numIdx + 1)
+        .find((l) => l !== player.name && !/^(QB|RB|WR|TE|K|DEF)$/.test(l) && !/^Bye/.test(l));
+      out.push({ overall, drafter: drafter || `slot${slotOfPick(overall)}`, player });
+    }
+    return out;
+  }
+
+  /** Fold the feed into per-team rosters and the slot-to-name map. */
+  function recordPicks() {
+    for (const { overall, drafter, player } of scanPickRows()) {
+      if (state.seenPickNos.has(overall)) continue;
+      state.seenPickNos.add(overall);
+      const full = state.pool.get(player.id)
+        || [...state.pool.values()].find((x) => x.name === player.name && x.pos === player.pos);
+      (state.teamRosters[drafter] = state.teamRosters[drafter] || [])
+        .push(Object.assign({}, player, full ? { proj: full.proj } : {}));
+      state.slotNames[slotOfPick(overall)] = drafter;
+      state.taken.add(key(player.name, player.pos));
+    }
+  }
+
   function scanPicks() {
     const found = [];
     for (const el of document.querySelectorAll('.ys-player')) {
@@ -431,6 +479,7 @@
     const was = activeTab();
     const mustSwitch = !/^Picks$/i.test(was);
     if (mustSwitch) { t.picks.click(); await sleep(450); }
+    recordPicks();                       // per-team rosters, for pick projection
     const n = foldPicks();
     if (mustSwitch && t.queue) { t.queue.click(); await sleep(250); }
     if (n) say(`picks panel: +${n} new (${state.taken.size} drafted overall)`);
@@ -548,6 +597,10 @@
     exhausted: {},          // positions with nothing left to re-read
     working: false,         // true while we are clicking in the queue UI
     ours: new Set(),        // "NAME|POS" of entries WE added; anything else is yours
+    baseline: null,         // worst-starter projection per position; computed once
+    teamRosters: {},        // drafter name -> [players], accumulated from the feed
+    slotNames: {},          // draft slot -> drafter name, learned from round one
+    seenPickNos: new Set(), // overall pick numbers already recorded
   };
 
   const key = (name, pos) => `${name.replace(/\s+/g, ' ').trim().toUpperCase()}|${pos}`;
@@ -598,6 +651,160 @@
       }
     }
     return n;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pick projection (see PROJECTION.md)
+  // ---------------------------------------------------------------------------
+
+  /** Positions a flex slot accepts. */
+  const FLEX_POS = ['RB', 'WR', 'TE'];
+
+  /**
+   * League baseline: the projection of a replacement-level STARTER at each
+   * position. Computed once from the full pool and frozen — it describes the
+   * league's shape, not who happens to be undrafted.
+   */
+  function computeBaseline() {
+    const all = [...state.pool.values()].sort((a, b) => b.proj - a.proj);
+    const need = {};
+    for (const [pos, n] of Object.entries(CFG.STARTERS)) need[pos] = n * CFG.TEAMS;
+    let flexLeft = CFG.FLEX * CFG.TEAMS;
+
+    const starters = {};
+    const take = (p) => { (starters[p.pos] = starters[p.pos] || []).push(p.proj); };
+
+    for (const p of all) {                       // dedicated slots, best first
+      if ((need[p.pos] || 0) > 0) { need[p.pos]--; take(p); p._starter = true; }
+    }
+    for (const p of all) {                       // then flex, from what is left
+      if (p._starter || flexLeft <= 0) continue;
+      if (FLEX_POS.includes(p.pos)) { flexLeft--; take(p); p._starter = true; }
+    }
+    for (const p of all) delete p._starter;
+
+    const baseline = {};
+    for (const [pos, list] of Object.entries(starters)) baseline[pos] = Math.min(...list);
+    state.baseline = baseline;
+    say(`baseline (worst starter): ${JSON.stringify(baseline)}`);
+    return baseline;
+  }
+
+  /**
+   * Which slot number picks at a given overall pick, in a snake.
+   * Round 1 runs 1..T, round 2 runs T..1, and so on.
+   */
+  function slotOfPick(overall) {
+    const T = CFG.TEAMS;
+    const round = Math.ceil(overall / T);
+    const idx = (overall - 1) % T;
+    return (round % 2 === 1) ? idx + 1 : T - idx;
+  }
+
+  /** Our next pick at or after a given overall pick. */
+  function ourNextPickAfter(overall) {
+    for (let p = overall; p < overall + CFG.TEAMS * 3; p++) {
+      if (slotOfPick(p) === CFG.SLOT) return p;
+    }
+    return overall;
+  }
+
+  /**
+   * The "subsequent pick": the one AFTER our next pick, unless our next two are
+   * consecutive, in which case it is the one after that pair. This is the horizon
+   * over which a position can realistically be stripped.
+   */
+  function subsequentPick(currentPick) {
+    const first = ourNextPickAfter(currentPick);
+    const second = ourNextPickAfter(first + 1);
+    return (second === first + 1) ? ourNextPickAfter(second + 1) : second;
+  }
+
+  /** Starting slots a roster still has open, as positions a pick could fill. */
+  function openSlots(roster) {
+    const count = (pos) => roster.filter((r) => r.pos === pos).length;
+    const open = new Set();
+    let flexUsed = 0;
+    for (const pos of FLEX_POS) flexUsed += Math.max(0, count(pos) - (CFG.STARTERS[pos] || 0));
+    for (const [pos, n] of Object.entries(CFG.STARTERS)) if (count(pos) < n) open.add(pos);
+    if (flexUsed < CFG.FLEX) for (const pos of FLEX_POS) open.add(pos);
+    return open;
+  }
+
+  /**
+   * What one team would take, given its roster and who is left. Models a rational
+   * drafter: fill starting slots first by surplus over a replacement starter, then
+   * draft for depth with RB/WR weighted up.
+   */
+  function projectedChoice(roster, pool) {
+    const base = state.baseline || {};
+    const open = openSlots(roster);
+    const fillingStarters = open.size > 0;
+
+    // A team will not take a third player at one position sharing a bye week.
+    const byeBlocked = (p) => p.bye != null &&
+      roster.filter((r) => r.pos === p.pos && r.bye === p.bye).length >= 2;
+
+    let best = null, bestScore = -Infinity;
+    for (const p of pool) {
+      if (byeBlocked(p)) continue;
+      if (fillingStarters && !open.has(p.pos)) continue;
+      if ((CFG.CAPS[p.pos] || 99) <= roster.filter((r) => r.pos === p.pos).length) continue;
+
+      let score = p.proj - (base[p.pos] ?? p.proj);
+      if (!fillingStarters && (p.pos === 'RB' || p.pos === 'WR')) score *= CFG.BACKUP_RB_WR_WEIGHT;
+      if (score < 1) score = 1;                  // a pick happens regardless
+      // Ties go to running back.
+      if (score > bestScore || (score === bestScore && p.pos === 'RB' && best && best.pos !== 'RB')) {
+        best = p; bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Play the draft forward from the last completed pick to our subsequent pick,
+   * and report the best projection expected to survive at each position.
+   */
+  function projectAvailability(currentPick) {
+    if (!state.baseline) return null;
+    const target = subsequentPick(currentPick);
+    const mine = new Set(roster().map((r) => key(r.name, r.pos)));
+
+    // Everyone still on the board, best first.
+    const pool = [...state.pool.values()]
+      .filter((p) => !state.taken.has(key(p.name, p.pos)) && !mine.has(key(p.name, p.pos)))
+      .sort((a, b) => b.proj - a.proj);
+
+    // ACTUAL rosters and PROJECTED rosters are kept strictly apart. The
+    // simulation adds imaginary picks, so it works on copies; state.teamRosters
+    // only ever changes when a real pick is observed in the feed. Every rebuild
+    // re-forks from the current actual rosters, so a projection is never seeded
+    // with the previous projection's guesses.
+    const projectedRosters = {};
+    for (const [name, list] of Object.entries(state.teamRosters || {})) {
+      projectedRosters[name] = list.map((p) => ({ ...p }));
+    }
+
+    const gone = new Set();
+    for (let p = currentPick; p < target; p++) {
+      const slot = slotOfPick(p);
+      if (slot === CFG.SLOT) continue;                 // our own picks are not simulated
+      const who = (state.slotNames || {})[slot] || `slot${slot}`;
+      const rost = projectedRosters[who] || (projectedRosters[who] = []);
+      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)));
+      if (!choice) continue;
+      gone.add(choice.id);
+      rost.push(choice);
+    }
+
+    const expected = {};
+    for (const p of pool) {
+      if (gone.has(p.id)) continue;
+      if (expected[p.pos] === undefined) expected[p.pos] = [];
+      if (expected[p.pos].length < 3) expected[p.pos].push(p);   // keep a few, to exclude self
+    }
+    return { target, gone, expected };
   }
 
   // ---------------------------------------------------------------------------
@@ -723,6 +930,9 @@
      * around the horizon rather than a step function: a player whose ADP sits
      * exactly at the horizon is a coin flip, not a certainty either way.
      */
+    // Play the draft forward and see what actually survives (PROJECTION.md).
+    const projected = projectAvailability(currentPick);
+
     const deadline = currentPick + horizon;
     // Our final pick of the draft, used for kickers and defenses.
     const endDeadline = currentPick + Math.max(1, size - have.length) * CFG.TEAMS;
@@ -769,6 +979,13 @@
       // on one scale; only the deadline differs. Leaving them on a fixed
       // "twelve deep" rule while skill positions moved to expected replacement
       // made K and DEF look far worse than they are.
+      // Preferred: what the simulation says is still there at our subsequent pick.
+      if (projected && projected.expected[pos]) {
+        const survivor = projected.expected[pos].find((p) => p.id !== exceptId);
+        if (survivor) return survivor.proj;
+      }
+      // Fallback while the simulation has no opinion (no baseline yet, or a
+      // position it never reached): the ADP survival model.
       const by = (pos === 'K' || pos === 'DEF') ? endDeadline : deadline;
       let remaining = 1;          // chance everyone better has already gone
       let expected = 0;
@@ -1366,6 +1583,7 @@
         await readPool();
         if (!state.pool.size) { say('pool came back empty — not arming, will retry'); return; }
         loadOurs();
+        computeBaseline();               // once, from the full pool
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;
         state.armed = true;
@@ -1577,6 +1795,39 @@
       draftQueueTop();
     } catch (e) { say(`autopick watcher: ${e.message}`); }
   }, 400);
+
+  /**
+   * Write each entry's numbers into Yahoo's own queue rows: GAIN, then the playoff
+   * delta when non-zero. Numbers only — the row is narrow and the name is there.
+   * React re-renders these rows freely, so the tag is re-applied every pass.
+   */
+  function annotateQueue() {
+    if (!CFG.ANNOTATE_QUEUE) return;
+    if (!/^Queue/i.test(activeTab())) return;
+    const valued = queueView();
+    for (const el of [...document.querySelectorAll('.ys-player')].filter((e) => /ADP:/.test(e.innerText))) {
+      const p = parsePlayer(el);
+      if (!p) continue;
+      const v = valued.find((x) => x.name === p.name && x.pos === p.pos);
+      let tag = el.querySelector(':scope > .ys-assist');
+      if (!tag) {
+        tag = document.createElement('span');
+        tag.className = 'ys-assist';
+        tag.style.cssText = 'display:block;pointer-events:none;font:600 10.5px/1.3 ' +
+          'ui-monospace,Menlo,monospace;letter-spacing:.02em;margin-top:1px';
+        el.appendChild(tag);
+      }
+      if (!v || !Number.isFinite(v.val)) {
+        tag.textContent = v && v.val === Infinity ? 'MUST' : '';
+        tag.style.color = '#8b96a3';
+        continue;
+      }
+      const sched = Number.isFinite(v.playoffDelta) && Math.abs(v.playoffDelta) >= 0.05
+        ? `  ${v.playoffDelta > 0 ? '+' : '−'}${Math.abs(v.playoffDelta).toFixed(1)}` : '';
+      tag.textContent = (v.val > 0 ? '+' : '') + v.val.toFixed(1) + sched;
+      tag.style.color = v.val > 0 ? '#1a7f4b' : '#8b96a3';
+    }
+  }
 
   let paintErr = null;
   const overlayTimer = setInterval(() => {

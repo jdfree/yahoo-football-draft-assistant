@@ -74,6 +74,16 @@ This is a heuristic model of a rational drafter, not a simulation of any particu
 opponent. It will be wrong about individual picks. It only has to be roughly right
 about *how many* players at each position disappear.
 
+### Actual rosters versus projected rosters
+
+These are kept strictly apart. `state.teamRosters` holds only what has really been
+drafted, and changes solely when a pick is observed in the feed. The simulation
+forks a copy and adds imaginary picks to that.
+
+Every queue rebuild re-forks from the current actual rosters, so a projection is
+never seeded with the previous projection's guesses — otherwise imagined picks
+would compound into the next run and drift further from the draft with every pass.
+
 ## 3. Valuing our own candidates
 
 - Every currently undrafted player is a candidate for our queue. The simulation

@@ -335,9 +335,17 @@
       const numIdx = lines.findIndex((l) => /^\d{1,3}$/.test(l));
       if (numIdx < 0) continue;
       const overall = +lines[numIdx];
-      // The drafter is the line after the number that is not part of the player block.
-      const drafter = lines.slice(numIdx + 1)
-        .find((l) => l !== player.name && !/^(QB|RB|WR|TE|K|DEF)$/.test(l) && !/^Bye/.test(l));
+
+      // Rows are laid out [number, drafter, player, position, team, bye], so the
+      // drafter is simply the next line. Do NOT filter by content: a team named
+      // "K" or "DEF" would be rejected as a position and the NFL team picked up
+      // instead. One room had a team called simply "b". Position in the row is
+      // authoritative; only fall through if that line is missing entirely.
+      let drafter = lines[numIdx + 1];
+      if (!drafter || drafter === player.name) {
+        drafter = lines.slice(numIdx + 1)
+          .find((l) => l && l !== player.name && !/^Bye\b/.test(l));
+      }
       out.push({ overall, drafter: drafter || `slot${slotOfPick(overall)}`, player });
     }
     return out;

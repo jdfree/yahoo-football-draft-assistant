@@ -517,9 +517,24 @@
    * the second of a pair.
    */
   function pairFirstPosition() {
-    const here = draftPosition().overall;
-    if (slotOfPick(here - 1) !== CFG.SLOT) return null;
-    return state.pickPos[here - 1] || null;
+    // Detected from the ROSTER, not the header or the picks feed.
+    //
+    // Across back-to-back picks Yahoo keeps "your turn" continuous and the header
+    // lags, so at the second pick it still read the first pick's number — making
+    // "was the previous pick mine?" false every time. The picks feed is no help
+    // either: the tick deliberately does not sync it during our own turn. The
+    // roster panel, though, updates the moment a pick lands.
+    //
+    // So: snapshot our roster when the turn begins, and if it has since grown
+    // while the turn is still running, we are on the second pick of a pair and the
+    // position that grew is what we just took.
+    if (!state.turnRosterCounts) return null;
+    const now = {};
+    for (const r of roster()) now[r.pos] = (now[r.pos] || 0) + 1;
+    for (const pos of Object.keys(now)) {
+      if ((now[pos] || 0) > (state.turnRosterCounts[pos] || 0)) return pos;
+    }
+    return null;
   }
 
   /**
@@ -2902,17 +2917,34 @@
    */
   let autopickTried = false;
   let pairTried = false;
+  let pairTrace = null;
   let watchTrace = null;
   const autopickTimer = setInterval(() => {
     try {
       if (complete()) return;
-      if (!myTurn()) { autopickTried = false; pairTried = false; watchTrace = null; return; }
+      if (!myTurn()) {
+        autopickTried = false; pairTried = false; watchTrace = null;
+        state.turnRosterCounts = null;
+        return;
+      }
+      // First tick of this turn: remember what the roster looked like before we
+      // picked, so a pick made during the turn is detectable.
+      if (!state.turnRosterCounts) {
+        const c = {};
+        for (const r of roster()) c[r.pos] = (c[r.pos] || 0) + 1;
+        state.turnRosterCounts = c;
+      }
       const left = secondsLeft();
 
       // Back-to-back picks: on the SECOND of the pair, force a different position
       // than the first. Fires at PAIR_SPLIT_AT_SECONDS regardless of whether the
       // ordinary last-second pick is enabled.
       const firstPos = pairFirstPosition();
+      if (firstPos && pairTrace !== firstPos) {
+        pairTrace = firstPos;
+        say(`back-to-back: already took ${firstPos} this turn — will split at ` +
+            `${CFG.PAIR_SPLIT_AT_SECONDS}s`);
+      }
       if (firstPos && !pairTried && left !== null && left <= CFG.PAIR_SPLIT_AT_SECONDS) {
         pairTried = true;
         draftDifferentPosition(firstPos);

@@ -21,13 +21,21 @@ That makes league size something the assistant must know **before** it computes,
 not something it can correct later — so it waits until the size is *confirmed*
 rather than assuming a default. Slot is easy: it is in the draft-room URL.
 
-Team count is narrowed from the header. Every `ROUND r, PICK n` the room displays
-is a constraint, since pick `n` falls in round `r` exactly when
-`(r-1)·T < n <= r·T`. Round 1 pick 14 gives `T >= 14`; round 2 pick 15 gives
-`T < 15`; together `T = 14`. This resolves at the first pick of round 2 — the
-earliest point at which the size is determined at all — and tolerates missed
-picks. Until then there is no baseline and ranking falls back to the ADP survival
-model, which costs the projection for round 1 only.
+Team count is **counted, not inferred**. The room renders the whole draft order —
+for a 14-team, 15-round draft, 210 entries — and a snake order mirrors at the
+turn: `... Hugh, Ira, Ira, Hugh ...`. The position of that mirror is the team
+count. It is available from the first pick, it is positional so duplicate manager
+names cannot break it, and the mirror doubles as a check: the first `2T` entries
+must read the same forwards and backwards. The container's class names are
+obfuscated and change between rooms, so it is found by that structure rather than
+by selector.
+
+If the strip is not up, team count falls back to narrowing from the header. Every
+`ROUND r, PICK n` is a constraint, since pick `n` falls in round `r` exactly when
+`(r-1)·T < n <= r·T`: round 1 pick 14 gives `T >= 14`, round 2 pick 15 gives
+`T < 15`, so `T = 14`. That resolves only at the first pick of round 2, which
+costs the projection for round 1 — acceptable, since queueing by ADP is almost
+always what you want in round 1 anyway.
 
 Two rejected sources, both tried live:
 
@@ -35,7 +43,7 @@ Two rejected sources, both tried live:
   Pick 8 (22nd Overall)`) gives `T = (7 + 22 - 1) / 2` directly, and is used when
   present — but it is not rendered in every room, and never before the draft
   starts.
-- **Counting distinct drafters** is wrong twice over. Early on, the number of
+- **Counting distinct drafters in the picks feed** is wrong twice over. Early on, the number of
   drafters trivially equals the number of picks: at pick 4 of a 14-team room it
   "confirmed" four teams and froze the baseline against them. And drafter names
   are not unique — one live room held two `Mark`, two `Marcuss` and two `Jason`,

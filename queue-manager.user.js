@@ -950,8 +950,45 @@
     }
   }
 
+  /**
+   * Count the teams directly, from the draft-order strip the room already renders.
+   *
+   * That strip lists every upcoming pick in order — for a 14-team, 15-round draft,
+   * 210 entries — and a snake order mirrors at the turn: "... Hugh, Ira, Ira,
+   * Hugh ...". The position of that mirror IS the team count. It is positional, so
+   * duplicate manager names cannot break it, and the mirror itself is a check: the
+   * first 2T entries must read the same forwards and backwards.
+   *
+   * The container's class names are obfuscated and change, so it is found by that
+   * structure rather than by selector.
+   */
+  function detectTeamsFromOrder() {
+    let best = null;
+    for (const el of document.querySelectorAll('div,ul,ol')) {
+      const kids = el.children;
+      if (kids.length < 16 || kids.length > 800) continue;
+      const names = [...kids].map((c) => (c.innerText || '').trim().split('\n')[0]);
+      if (names.some((n) => !n)) continue;
+      let pivot = -1;
+      for (let i = 1; i < names.length - 1; i++) {
+        if (names[i] === names[i + 1]) { pivot = i; break; }
+      }
+      const t = pivot + 1;
+      if (t < 4 || t > 32 || names.length < 2 * t) continue;
+      let mirrors = true;                       // names[i] === names[2t-1-i]
+      for (let i = 0; i < t && mirrors; i++) if (names[i] !== names[2 * t - 1 - i]) mirrors = false;
+      if (mirrors && (!best || kids.length > best.count)) best = { teams: t, count: kids.length };
+    }
+    return best ? best.teams : null;
+  }
+
   /** @returns {{teams:number, confirmed:boolean}} */
   function detectTeams() {
+    // Read it off the draft order if the strip is up. This is a count, not an
+    // inference, and it is available from the first pick.
+    const counted = detectTeamsFromOrder();
+    if (counted) return { teams: counted, confirmed: true };
+
     const sched = pickSchedule();
     const r1 = sched.find((x) => x.round === 1);
     const r2 = sched.find((x) => x.round === 2);

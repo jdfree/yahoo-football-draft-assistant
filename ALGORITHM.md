@@ -4,10 +4,18 @@ Every factor is labelled so it can be named directly — "raise **O10**", "**V6*
 too strong". Labels are stable; if a factor is removed its label is retired
 rather than reused.
 
-There are two valuations, and they are not the same. **We** value a player by
-what we gain by taking him now instead of waiting. **Opponents** are modelled by
-value over a replacement-level starter. The two meet only at the floors: the
-opponent model predicts who disappears, and what survives becomes our bar.
+There are two valuations, and they are not the same.
+
+**We** value a player by what we gain by taking him now instead of waiting. Our
+bar is the projected floor.
+
+**Opponents** are modelled by value over a replacement-level player — but that bar
+is no longer frozen. Only the *first* projection of a draft measures against the
+static worst-starter baseline (S4); every projection after it measures against the
+floors the previous projection produced, so the bar descends with the board.
+
+The output therefore feeds two places: the floors become **our** bar, and they
+become the **next projection's** bar. S4 survives only to seed the first run.
 
 ---
 

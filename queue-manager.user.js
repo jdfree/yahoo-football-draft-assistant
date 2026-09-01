@@ -1919,8 +1919,18 @@
    * five variations on the same decision — if a run empties that position, the
    * rest of the queue is still useful.
    */
-  const positionLimit = (pos, b2b) => {
-    if (pos === 'K' || pos === 'DEF') return b2b ? 1 : 2;
+  const positionLimit = (pos) => {
+    // K and DEF get two slots — a pick and a FALLBACK. There is exactly one of
+    // each worth having at any moment, so if ours is sniped between the rebuild
+    // and our clock, one slot leaves nothing behind him but negative surplus.
+    //
+    // This used to collapse to 1 on back-to-back picks, to stop a turn spending
+    // both of them on kickers. Q10 already prevents that where it actually
+    // happens — at the draft click, by position, verified live — so the cap was a
+    // second lock on a door already held, and the only thing it really did was
+    // strip the fallback out of every turn-slot queue. Round 13 at a turn slot:
+    // top kicker queued, no kicker behind him, everyone below him negative.
+    if (pos === 'K' || pos === 'DEF') return 2;
     return Math.max(1, CFG.QUEUE_SIZE - 2);
   };
 
@@ -1961,7 +1971,7 @@
       const ranked = rankAvailable([])
         .filter((p) => !chosen.some((c) => c.id === p.id))
         .filter((p) => !p.gated)                       // late-round gate applies here
-        .filter((p) => (posCount[p.pos] || 0) < positionLimit(p.pos, b2b));
+        .filter((p) => (posCount[p.pos] || 0) < positionLimit(p.pos));
       if (!ranked.length) break;
       const pick = ranked[0];
       chosen.push(pick);
@@ -2116,7 +2126,6 @@
    */
   async function pruneQueue() {
     const have = roster();
-    const b2b = backToBack();
     const view = queueView();
     const bad = new Set();
     const mark = (p) => bad.add(`${p.name}|${p.pos}`);
@@ -2150,7 +2159,7 @@
       // No position may occupy more than QUEUE_SIZE-2 slots, so the queue always
       // holds a genuine alternative rather than variations on one decision.
       seen[p.pos] = (seen[p.pos] || 0) + 1;
-      if (seen[p.pos] > positionLimit(p.pos, b2b)) mark(p);
+      if (seen[p.pos] > positionLimit(p.pos)) mark(p);
     }
 
 

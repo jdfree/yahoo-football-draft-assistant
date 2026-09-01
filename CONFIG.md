@@ -39,9 +39,11 @@ values of −0.61, −1.60 and −2.56, a ×3 multiplier pushed RB and WR *down*
 queue rather than up. A projection boost shifts the surplus upward whatever its
 sign.
 
-Not to be confused with `BACKUP_RB_WR_WEIGHT`, which is the ×3 used inside the
-opponent simulation (see [PROJECTION.md](PROJECTION.md)). That one is safe as a
-multiplier because surpluses are floored at +1 before it applies.
+The same knob is used inside the opponent simulation, for the same reason. It
+replaced a ×3 multiplier on surplus there, which had the identical flaw: a back
+far above baseline was tripled while a receiver just below baseline floored at 1
+and could never win a simulated pick, so the model drafted 28 backs and no
+receivers in 31 picks.
 
 ## `LATE_ONLY` — positions held to the last two rounds
 
@@ -247,7 +249,8 @@ the last rounds*, rather than appearing as blank rows.
 
 | Parameter | Default |
 | --- | --- |
-| `BACKUP_RB_WR_WEIGHT` | `3` |
+| `BENCH_RB_WR_BOOST` | `0.10` |
+| `OPPONENT_LATE_K_DEF` | `2` |
 
 Injuries and bye-week holes are needed far more often at running back and receiver
 than at quarterback or tight end, where a single starter usually suffices. This

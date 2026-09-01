@@ -129,17 +129,9 @@
     ADP_SIGMA: 12,
 
     // --- backup depth at RB/WR ----------------------------------------------
-    // Injuries and bye-week holes are needed far more often at running back and
-    // receiver than at quarterback or tight end, where one starter usually
-    // suffices. This multiplies the RANKING weight of a bench-tier RB or WR so
-    // depth there wins ties against a bench QB or TE of similar raw value.
-    //
-    // It deliberately does NOT change the displayed GAIN — the overlay keeps
-    // showing the honest points-over-replacement figure. Only the ordering moves.
-    BACKUP_RB_WR_WEIGHT: 3,
-
     // How much to inflate an RB's or WR's PROJECTION when he is being valued as a
-    // bench player, as a fraction. Bench depth matters more at those positions:
+    // bench player, as a fraction. Used both for our own queue and inside the
+    // opponent simulation. Bench depth matters more at those positions:
     // you start two of each plus a flex, and they miss time most often.
     //
     // This is deliberately a boost to the projection rather than a multiplier on
@@ -920,8 +912,15 @@
       if (fillingStarters && !fillable.has(p.pos)) continue;
       if ((CFG.CAPS[p.pos] || 99) <= roster.filter((r) => r.pos === p.pos).length) continue;
 
-      let score = p.proj - (base[p.pos] ?? p.proj);
-      if (!fillingStarters && (p.pos === 'RB' || p.pos === 'WR')) score *= CFG.BACKUP_RB_WR_WEIGHT;
+      // Bench depth at RB and WR boosts the PROJECTION, not the surplus — the same
+      // correction already made on our own side of the model. Multiplying a surplus
+      // scales whatever is there, so a back sitting far above baseline was
+      // tripled while a receiver sitting just below baseline floored at 1 and could
+      // never win. The simulation drafted 28 running backs and no receivers in 31
+      // picks, which collapsed the RB floor and inflated every back's surplus.
+      const boost = (!fillingStarters && (p.pos === 'RB' || p.pos === 'WR'))
+        ? 1 + CFG.BENCH_RB_WR_BOOST : 1;
+      let score = p.proj * boost - (base[p.pos] ?? p.proj);
       if (score < 1) score = 1;                  // a pick happens regardless
       // Ties go to running back.
       if (score > bestScore || (score === bestScore && p.pos === 'RB' && best && best.pos !== 'RB')) {

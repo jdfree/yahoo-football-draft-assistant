@@ -139,16 +139,28 @@ For each simulated pick, take that team's roster as it stands and:
    one. Choose the available player with the greatest `projection − worst starter
    at his position`.
 2. **If every starting slot is filled** (or becomes filled mid-simulation), consider
-   all positions using the same surplus, but apply the backup depth multiplier
-   (`BACKUP_RB_WR_WEIGHT`, default 3) to RB and WR — bench depth is needed far more
-   often at those positions.
-3. **Bye-week limit:** a team will not take a third player at one position sharing a
+   all positions using the same surplus, but inflate an RB's or WR's **projection**
+   by `BENCH_RB_WR_BOOST` — bench depth is needed far more often at those positions.
+
+   The boost lands on the projection, never on the surplus. Scaling a surplus
+   scales whatever happens to be there: a back sitting far above baseline was
+   tripled while a receiver sitting just below baseline floored at 1 and could
+   never win a pick. The simulation drafted 28 running backs and no receivers in 31
+   picks, which collapsed the RB floor and inflated every back's surplus in turn.
+3. **Kickers and defenses wait.** Opponents are modelled as leaving them until the
+   last `OPPONENT_LATE_K_DEF` rounds. A kicker scores positive against baseline
+   from round one, so without this the simulation drafts them constantly — 11
+   kickers and 11 defenses in 29 picks — and never touches the skill positions that
+   are actually disappearing. A team whose only remaining gaps are a kicker and a
+   defense falls through to bench depth rather than drafting nobody.
+
+4. **Bye-week limit:** a team will not take a third player at one position sharing a
    bye week. If it already holds two such, that position is skipped for players on
    that bye.
-4. **Negative surplus floors to +1.** Late in a draft every remaining player is
+5. **Negative surplus floors to +1.** Late in a draft every remaining player is
    below starter calibre; without a floor the comparison degenerates. A pick still
    happens, so treat the best option as marginally positive.
-5. **Ties break toward RB.**
+6. **Ties break toward RB.**
 
 This is a heuristic model of a rational drafter, not a simulation of any particular
 opponent. It will be wrong about individual picks. It only has to be roughly right

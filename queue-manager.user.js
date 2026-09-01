@@ -1868,14 +1868,36 @@
     if (!wrong.length) return 0;                  // nothing outranked: touch nothing
     const doomed = new Set(wrong.map((pl) => key(pl.name, pl.pos)));
 
-    const out = await removeFromQueue((pl) => !isHuman(pl) && doomed.has(key(pl.name, pl.pos)));
-    if (out.length) {
+    /**
+     * Swap one at a time: remove a single entry, put its replacement in, then move
+     * on. Removing everything first and refilling afterwards left the queue nearly
+     * empty for as long as the rebuild took — a live round-2 rebuild was still
+     * running when the round-3 pick arrived, and the queue had almost nothing in
+     * it at exactly the moment it mattered. At worst this is one slot short for a
+     * moment.
+     */
+    let swapped = 0;
+    for (const victim of wrong) {
+      if (myTurn()) { say('your turn started — stopping reconciliation'); break; }
+      const vKey = key(victim.name, victim.pos);
+      const gone = await removeFromQueue((pl) => !isHuman(pl) && key(pl.name, pl.pos) === vKey);
+      if (!gone.length) continue;
+      swapped++;
+      const present = new Set(queueView().filter(Boolean).map((pl) => key(pl.name, pl.pos)));
+      const add = plan.find((pl) => !present.has(key(pl.name, pl.pos)));
+      if (add && await toggleQueue(add, true)) {
+        state.queue.push(add);
+        state.ours.add(key(add.name, add.pos));
+        saveOurs();
+      }
+    }
+    if (swapped) {
       const why = wrong.filter((pl) => !keep.has(key(pl.name, pl.pos))).length;
-      say(`reconciled: dropped ${out.length} (${why} outranked, ${out.length - why} out of order),` +
+      say(`reconciled: swapped ${swapped} (${why} outranked, ${swapped - why} out of order),` +
           ` kept ${good}`);
     }
     await clearFilters();
-    return out.length;
+    return swapped;
   }
 
   /** Available (undrafted, unrostered) count per position. */

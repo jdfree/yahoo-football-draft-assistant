@@ -2862,9 +2862,22 @@
       return `<span style="color:#7c8894">${pos}</span> ` +
              `<span${stale ? ' style="color:#e08a6e"' : ''}>${v === null ? '—' : v.toFixed(1)}</span>`;
     }).join('<span style="color:#39414d">|</span>');
+    // The FLEX floor — the highest of RB/WR/TE — is the bar every flex-eligible
+    // BACKUP is measured against (V14), so it belongs on screen beside the
+    // per-position floors that starters use.
+    let flex = null;
+    for (const q of FLEX_POS) {
+      const l = byPos[q] && byPos[q].length ? byPos[q][0].proj : null;
+      const now = live[q];
+      const v = l === null ? null : (now === undefined ? l : Math.min(l, now));
+      if (v !== null && (flex === null || v > flex)) flex = v;
+    }
     floorsEl.innerHTML =
       `<span style="color:#d99b52">FLOORS R${round}</span>` +
-      `<span style="color:#7c8894">pick ${at}</span>` + cells;
+      `<span style="color:#7c8894">pick ${at}</span>` + cells +
+      `<span style="color:#39414d">|</span>` +
+      `<span style="color:#d99b52">FLEX</span> ` +
+      `<span>${flex === null ? '—' : flex.toFixed(1)}</span>`;
 
     // Anchored to the bottom of the WINDOW, not the table. Tying it to the table
     // meant filtering the player list to a single row jumped the strip halfway up

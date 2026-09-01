@@ -149,6 +149,12 @@
     // only the ordering.
     BENCH_RB_WR_BOOST: 0.10,
 
+    // How many rounds from the end an OPPONENT is assumed to consider a kicker or
+    // defense. A kicker scores positive against baseline from round one, so
+    // without this the simulation drafts them constantly and never touches the
+    // skill positions that are actually disappearing.
+    OPPONENT_LATE_K_DEF: 2,
+
     // --- same-team bias -----------------------------------------------------
     // Percentage reduction applied to a player's projection when you already hold
     // someone from his NFL team. 0 disables it. 0.10 means a player from a team
@@ -880,7 +886,7 @@
    * drafter: fill starting slots first by surplus over a replacement starter, then
    * draft for depth with RB/WR weighted up.
    */
-  function projectedChoice(roster, pool) {
+  function projectedChoice(roster, pool, pickNo) {
     const base = state.baseline || {};
     const open = openSlots(roster);
     const fillingStarters = open.size > 0;
@@ -889,9 +895,19 @@
     const byeBlocked = (p) => p.bye != null &&
       roster.filter((r) => r.pos === p.pos && r.bye === p.bye).length >= 2;
 
+    // Opponents do not draft kickers and defenses until the end, whatever the
+    // surplus says, and modelling them as if they might is badly wrong: a kicker
+    // scores positive against baseline from round one, so with any unfilled K or
+    // DEF slot the model will happily take one. Left unchecked it drafted eleven
+    // of each inside thirty picks. This is a claim about how opponents behave, not
+    // about how we should — our own LATE_ONLY gate is separate and off by default.
+    const roundOfPick = Math.ceil(pickNo / CFG.TEAMS);
+    const lateEnough = roundOfPick > rosterSize() - CFG.OPPONENT_LATE_K_DEF;
+
     let best = null, bestScore = -Infinity;
     for (const p of pool) {
       if (byeBlocked(p)) continue;
+      if (!lateEnough && (p.pos === 'K' || p.pos === 'DEF')) continue;
       if (fillingStarters && !open.has(p.pos)) continue;
       if ((CFG.CAPS[p.pos] || 99) <= roster.filter((r) => r.pos === p.pos).length) continue;
 
@@ -931,15 +947,17 @@
     }
 
     const gone = new Set();
+    let simulated = 0;
     for (let p = currentPick; p < target; p++) {
       const slot = slotOfPick(p);
       if (slot === CFG.SLOT) continue;                 // our own picks are not simulated
       const who = (state.slotNames || {})[slot] || `slot${slot}`;
       const rost = projectedRosters[who] || (projectedRosters[who] = []);
-      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)));
+      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)), p);
       if (!choice) continue;
       gone.add(choice.id);
       rost.push(choice);
+      simulated++;
       await Promise.resolve();      // yield between picks; see ensureProjection
     }
 
@@ -949,7 +967,7 @@
       if (expected[p.pos] === undefined) expected[p.pos] = [];
       if (expected[p.pos].length < 12) expected[p.pos].push(p);  // a ladder, deep enough for a full queue
     }
-    return { target, gone, expected };
+    return { target, gone, expected, simulated };
   }
 
   // ---------------------------------------------------------------------------
@@ -1143,14 +1161,24 @@
     for (const [pos, list] of Object.entries(sim.expected)) {
       byPos[pos] = list.slice(0, 12).map((p) => ({ id: p.id, proj: p.proj }));
     }
-    state.proj = { round: rd, teams: CFG.TEAMS, target: sim.target, byPos };
+    // Diagnostics: how many picks were simulated, and what the model thinks goes.
+    // A floor is only as good as the attrition behind it, and "how many receivers
+    // disappear before my next-but-one pick" is the number to sanity-check.
+    const goneByPos = {};
+    for (const id of sim.gone) {
+      const pl = state.pool.get(id);
+      if (pl) goneByPos[pl.pos] = (goneByPos[pl.pos] || 0) + 1;
+    }
+    state.proj = { round: rd, teams: CFG.TEAMS, target: sim.target, byPos,
+                   from: currentPick, simulated: sim.simulated, goneByPos };
     const shown = Object.entries(byPos)
       .map(([pos, l]) => `${pos} ${l.length ? l[0].proj : '-'}`).join(', ');
     // Label with the round the horizon is anchored to — the round of the pick we
     // are about to make — not the room's current round; past our own pick in a
     // round those differ, and the log read "round 13" while measuring from 14.
     const anchor = Math.ceil(ourNextPickAfter(currentPick) / CFG.TEAMS);
-    say(`projection from round ${anchor} (to pick ${sim.target}): ${shown}`);
+    say(`projection from round ${anchor} (picks ${currentPick}-${sim.target}, ` +
+        `${sim.simulated} simulated, gone ${JSON.stringify(goneByPos)}): ${shown}`);
     return state.proj;
   }
 
@@ -2217,8 +2245,14 @@
       // reload wipes anything we remembered — so nothing is carried forward.
       await syncQueue();
 
-      // Only disturb the tabs when we are actually about to rebuild the queue.
-      if (weDrafted || short) await syncPicksFromPanel();
+      // Refresh the picks feed before RE-PROJECTING as well as before rebuilding.
+      // The projection is only as good as the opponent rosters behind it, and those
+      // come from this feed. A projection once ran with teamRosters empty: every
+      // simulated team looked like it still needed a kicker and a defense, so the
+      // model spent 29 picks on 11 kickers and 11 defenses and removed no receivers
+      // at all, leaving the WR floor far too high.
+      const needProjection = !state.proj || state.proj.round !== roundNow();
+      if (weDrafted || short || needProjection) await syncPicksFromPanel();
 
       // Refresh the round's projection before anything reads it. Once per round is
       // enough — what survives to our subsequent pick does not meaningfully change

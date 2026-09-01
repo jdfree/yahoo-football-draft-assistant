@@ -642,7 +642,9 @@
     initialByPos: {},       // depth each position actually yielded on first read
     exhausted: {},          // positions with nothing left to re-read
     working: false,         // true while we are clicking in the queue UI
-    ours: new Set(),        // "NAME|POS" of entries WE added; anything else is yours
+    ours: new Set(),        // "NAME|POS" of entries WE added, persisted per room
+    human: new Set(),       // entries seen ARRIVING without us; never reordered
+    queueSynced: false,     // has the queue been read once? see syncQueue
     baseline: null,         // worst-starter projection per position; computed once
     teamRosters: {},        // drafter name -> [players], accumulated from the feed
     slotNames: {},          // draft slot -> drafter name, learned from round one
@@ -680,6 +682,9 @@
   // the call sites and inverted a removal predicate, which made the assistant's
   // own stale entries permanent while targeting the human's.
   const weQueued = (p) => state.ours.has(key(p.name, p.pos));
+  // Entries reconciliation must never move: only those observed ARRIVING in the
+  // queue without us adding them. Anything else is ours to manage.
+  const isHuman = (p) => state.human.has(key(p.name, p.pos));
 
   function foldPicks() {
     let n = 0;
@@ -1465,6 +1470,26 @@
     if (mustSwitch && tabs.queue) { tabs.queue.click(); await sleep(450); }
 
     const live = liveQueue() || [];
+
+    /**
+     * Work out which entries the human added, so reconciliation can leave those
+     * alone and rearrange the rest.
+     *
+     * An entry we did not add is only evidence of a human once we have seen the
+     * queue at least once: on the FIRST sync after arming, anything unrecognised
+     * is far more likely to be our own leftover from a reload than a human pick.
+     * Treating those as the human's made them permanent — a live queue ended up
+     * led by two kickers and a defense that no reconciliation could remove, ahead
+     * of a running back worth +93.6, and the K:1 cap was breached because the
+     * strays accumulated across reloads.
+     */
+    if (state.queueSynced) {
+      for (const p of live) {
+        if (!weQueued(p)) state.human.add(key(p.name, p.pos));
+      }
+    }
+    state.queueSynced = true;
+
     // Resolve each entry against the pool so we recover id, projection and value.
     state.queue = live.map((p) => {
       const hit = [...state.pool.values()]
@@ -1716,7 +1741,7 @@
     }
 
     // Never remove what the human queued themselves.
-    const yours = view.filter((p) => bad.has(`${p.name}|${p.pos}`) && !weQueued(p));
+    const yours = view.filter((p) => bad.has(`${p.name}|${p.pos}`) && isHuman(p));
     if (yours.length) {
       say(`leaving your own entries alone: ${yours.map((p) => p.name).join(', ')}`);
       yours.forEach((p) => bad.delete(`${p.name}|${p.pos}`));
@@ -1759,7 +1784,7 @@
 
     // Only entries the ASSISTANT queued are ours to move; the human's stay put.
     const current = queueView().filter((pl) => pl && pl.pos && pl.pos !== '?');
-    const ours = current.filter((pl) => weQueued(pl));
+    const ours = current.filter((pl) => !isHuman(pl));
 
     // How much of the queue already reads as the plan does?
     let good = 0;
@@ -1770,7 +1795,7 @@
     if (!wrong.length) return 0;                  // in order and complete: touch nothing
     const doomed = new Set(wrong.map((pl) => key(pl.name, pl.pos)));
 
-    const out = await removeFromQueue((pl) => weQueued(pl) && doomed.has(key(pl.name, pl.pos)));
+    const out = await removeFromQueue((pl) => !isHuman(pl) && doomed.has(key(pl.name, pl.pos)));
     if (out.length) {
       const why = wrong.filter((pl) => !keep.has(key(pl.name, pl.pos))).length;
       say(`reconciled: dropped ${out.length} (${why} outranked, ${out.length - why} out of order),` +
@@ -2259,7 +2284,7 @@
       `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
       `<span style="flex:1">PLAYER</span><span style="width:44px;text-align:right">GAIN</span>` +
       `<span style="width:38px;text-align:right">SCHED</span></div>` +
-      (q.length ? q.map((p, i) => row(p, i + 1, false, !weQueued(p))).join('')
+      (q.length ? q.map((p, i) => row(p, i + 1, false, isHuman(p))).join('')
                 : '<div style="color:#7c8894;margin-top:4px">empty</div>') +
       (next.length ? `<div style="color:#7c8894;border-top:1px dashed #2b333c;margin-top:7px;padding-top:4px">NEXT UP</div>` +
         next.map((p) => row(p, '·', true, false)).join('') : '') +

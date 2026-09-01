@@ -699,8 +699,10 @@
     // from the live pool after picks have happened walks it steadily downward,
     // because the best players are gone. Observed live — RB fell from 108.4 to
     // 92.6 purely because thirty-five players had been drafted in between.
-    if (!state.baselinePool || state.pool.size > state.baselinePool.length) {
-      state.baselinePool = [...state.pool.values()].map((p) => ({ pos: p.pos, proj: p.proj }));
+    const candidate = [...state.pool.values()].map((p) => ({ pos: p.pos, proj: p.proj }))
+      .concat(state.draftedPool || []);
+    if (!state.baselinePool || candidate.length > state.baselinePool.length) {
+      state.baselinePool = candidate;
     }
     const all = [...state.baselinePool].sort((a, b) => b.proj - a.proj);
     const need = {};
@@ -1532,6 +1534,53 @@
   const posFilter = () => [...document.querySelectorAll('select')]
     .find((s) => /All Positions/i.test(s.options?.[0]?.text || ''));
 
+  const draftedToggle = () => [...document.querySelectorAll('button')]
+    .find((b) => (b.innerText || '').trim() === 'Drafted');
+
+  /**
+   * Read the players who are already gone, for the baseline only.
+   *
+   * The baseline is the projection of a replacement-level starter, and it is a
+   * property of the league's shape — so it must be computed over every player,
+   * not just the undrafted ones. Arming mid-draft otherwise reads a pool with its
+   * best hundred players missing: observed live at pick 111, the RB worst-starter
+   * came out at 51.87 when the true figure was near 108, which makes every
+   * remaining running back look like a franchise cornerstone.
+   *
+   * Yahoo's "Drafted" pill filters the table to exactly those players, with the
+   * same projection column. Toggle it, sweep the positions, toggle it back.
+   */
+  async function readDraftedForBaseline() {
+    const btn = draftedToggle();
+    const sel = posFilter();
+    if (!btn || !sel) { say('baseline: no Drafted toggle — baseline covers undrafted players only'); return; }
+    if (myTurn()) { say('baseline: your turn — deferring drafted-player read'); return; }
+
+    const prevPos = sel.value;
+    const was = firstRowName();
+    btn.click();
+    await waitForTable({ minRows: 1, changedFrom: was });
+
+    const seen = new Map();
+    for (const label of CFG.POOL) {
+      const opt = [...sel.options].find((o) => o.text.trim() === label);
+      if (!opt) continue;
+      const before = firstRowName();
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await waitForTable({ minRows: 1, changedFrom: before });
+      for (const pl of readRows()) if (pl.proj > 0) seen.set(pl.id, { pos: pl.pos, proj: pl.proj });
+    }
+
+    state.draftedPool = [...seen.values()];
+    sel.value = prevPos;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    btn.click();                                  // back to the human's view
+    await waitForTable({ minRows: 1 });
+    const byPos = state.draftedPool.reduce((a, x) => (a[x.pos] = (a[x.pos] || 0) + 1, a), {});
+    say(`baseline: +${state.draftedPool.length} already-drafted read — ${JSON.stringify(byPos)}`);
+  }
+
   async function readPool() {
     const sel = posFilter();
     const prev = sel?.value;
@@ -1671,6 +1720,7 @@
         if (!state.pool.size) { say('pool came back empty — not arming, will retry'); return; }
         loadOurs();
         syncLeagueShape();               // slot from the URL, before anything uses it
+        await readDraftedForBaseline();  // so the baseline sees the whole league
         computeBaseline();               // once, from the full pool
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;

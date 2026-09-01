@@ -36,11 +36,21 @@ starter. Everything downstream is measured against it.
 drafted.** If the assistant is armed mid-draft, the undrafted pool is missing all
 the best players and the baseline would be far too low.
 
-The pool is snapshotted the first time the baseline is computed and that snapshot
-is reused for any recomputation — for instance when league size is corrected.
-Recomputing from the live pool walks the baseline steadily downward as the draft
-proceeds: observed live, RB fell from 108.4 to 92.6 purely because thirty-five
-players had been drafted in between.
+Two things protect it.
+
+**The snapshot is frozen.** The pool is captured the first time the baseline is
+computed and reused for any recomputation — for instance when league size is
+corrected. Recomputing from the live pool walks the baseline steadily downward as
+the draft proceeds: observed live, RB fell from 108.4 to 92.6 purely because
+thirty-five players had been drafted in between.
+
+**Drafted players are read back in.** Yahoo's `Drafted` pill filters the player
+table to exactly the players already taken, carrying the same projection column.
+At arm time the assistant toggles it, sweeps the positions, and merges those
+projections into the baseline pool before computing. Without this, arming
+mid-draft is badly wrong in a way that is easy to miss — at pick 111 the RB
+worst-starter read 51.87 against a true figure near 108, which makes every
+remaining running back look like a franchise cornerstone.
 
 ## 2. Predicting the picks between now and our subsequent pick
 
@@ -142,7 +152,8 @@ players into twelve rosters for free.
 
 - **The picks feed is windowed** at roughly seventy entries. Arming from the first
   pick captures everything; arming mid-draft loses the earliest picks, leaving
-  those teams' rosters incomplete and the baseline computed from a pool that is
-  missing its best players.
+  those teams' rosters incomplete. The baseline no longer suffers from this — it
+  reads the drafted players back in — but roster attribution still does, so the
+  simulation starts from partial opponent rosters when armed late.
 - **Opponent behaviour is assumed rational and uniform.** Real rooms contain
   homers, reachers and autodrafters. The model has no notion of any of them.

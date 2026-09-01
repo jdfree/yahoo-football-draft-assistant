@@ -36,10 +36,12 @@ const keywords = new Set(('if for while switch catch return typeof new function 
 // Browser globals: this runs in node, so they are absent from globalThis here.
 const browser = new Set(('getComputedStyle fetch alert confirm prompt requestAnimationFrame ' +
   'setTimeout setInterval clearTimeout clearInterval atob btoa').split(' '));
+// CSS functions inside nested template literals survive the string stripping.
+const css = new Set('rgba rgb hsl hsla calc translate translateX translateY var url linear-gradient'.split(' '));
 
 const called = [...src.matchAll(/(?<![.\w$])([a-z][A-Za-z0-9_$]*)\s*\(/g)].map((m) => m[1]);
 const missing = [...new Set(called)]
-  .filter((c) => !defined.has(c) && !keywords.has(c) && !browser.has(c) && !(c in globalThis));
+  .filter((c) => !defined.has(c) && !keywords.has(c) && !browser.has(c) && !css.has(c) && !(c in globalThis));
 
 if (missing.length) {
   console.error('UNRESOLVED CALLS: ' + missing.join(', '));

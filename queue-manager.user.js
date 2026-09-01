@@ -79,6 +79,14 @@
     // deepening and dropped the RB bar past a cliff.
     FLEX_EXTRA_SLOTS: 0.5,
 
+    // O16 — how many rounds from the end an opponent will consider a kicker or a
+    // defense. Purely behavioural: their surplus over baseline is genuinely large
+    // (a top defense scores about +20), but nobody drafts one in round five, and a
+    // model of opponents must model what they do rather than what the arithmetic
+    // recommends. Each team needs exactly one of each, so this wants to be a
+    // little wider than two.
+    SIM_KDEF_LAST_ROUNDS: 3,
+
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff
     // schedule in the league. At 0.10, two otherwise identical players differ by
@@ -878,10 +886,20 @@
     const byeBlocked = (p) => p.bye != null &&
       roster.filter((r) => r.pos === p.pos && r.bye === p.bye).length >= 2;
 
+    // O16 — opponents do not take a kicker or defense until the closing rounds,
+    // whatever the arithmetic says. Against the static baseline the best defense
+    // scores about +20 and the best kicker about +9, which beats a mid-round back
+    // at +5, so without this the model drafted eight defenses inside picks 45-98.
+    // The surplus is real; the behaviour is not. Nobody spends a fifth-round pick
+    // on a defense, and a model of opponents has to model what they do.
+    const roundOfPick = Math.ceil(pickNo / CFG.TEAMS);
+    const kdefAllowed = roundOfPick > rosterSize() - CFG.SIM_KDEF_LAST_ROUNDS;
+
     let best = null, bestScore = -Infinity;
     for (const p of pool) {
       if (byeBlocked(p)) continue;
       if (held(p.pos) >= limit(p.pos)) continue;
+      if (!kdefAllowed && (p.pos === 'K' || p.pos === 'DEF')) continue;
 
       // Plain surplus. No RB/WR multiplier here — the deepened baseline (S4 gives
       // those positions one extra slot, because the flex is filled from them)

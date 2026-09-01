@@ -51,6 +51,7 @@ in one live draft purely because thirty-five players had been drafted in between
 | **O11** | *(retired)* | There is no floor on the score. Clamping negatives to `+1` made every candidate below the bar exactly equal, so O12 stopped breaking ties and made the entire decision — 24 of 30 late picks went to running back, and with the rolling bar of O9 whole rounds went to a single position. A pick still happens: the best of several negative scores is still the best. | — |
 | **O12** | Tie-break | Ties go to running back. | — |
 | **O13** | Roster caps | A team will not exceed `CAPS[pos]` at any position. | `CAPS` |
+| **O16** | K/DEF timing | Opponents do not consider a kicker or defense until the last `SIM_KDEF_LAST_ROUNDS` rounds. Purely behavioural, and deliberately overriding the arithmetic: against the static baseline a top defense scores about **+20** and a top kicker **+9**, beating a mid-round back at +5, so without it the model drafted eight defenses inside picks 45–98. The surplus is real; the behaviour is not. A model of opponents has to model what they do. | `SIM_KDEF_LAST_ROUNDS: 3` |
 | **O15** | Roster limits | How many of a position one team will ever carry: QB 2, TE 2, K 1, DEF 1. RB and WR are left to `CAPS`. A roster that already exceeds a limit through real picks simply takes nothing more there. | `SIM_ROSTER_LIMITS` |
 | **O14** | Output | Per position, a ladder of up to **12** surviving players in projection order. The head of each ladder is that position's **floor**. Every horizon computed is retained, keyed by target pick. | — |
 
@@ -163,6 +164,7 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `BENCH_RB_WR_MULTIPLIER` | 2 | V6 |
 | `SIM_ROSTER_LIMITS` | QB2 TE2 K1 DEF1 | O15 |
 | `FLEX_EXTRA_SLOTS` | 0.5 | S4 |
+| `SIM_KDEF_LAST_ROUNDS` | 3 | O16 |
 | `PROJECT_AT_PICKS_AWAY` | 3 | O1 |
 | `SAME_TEAM_PENALTY` | 0 | V7 |
 | `BYE_FACTOR` | 0.5 | V8 |

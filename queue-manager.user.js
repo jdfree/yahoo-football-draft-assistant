@@ -666,8 +666,6 @@
     human: new Set(),       // entries seen ARRIVING without us; never reordered
     queueSynced: false,     // has the queue been read once? see syncQueue
     lastReconciledRound: null,  // reorder once per round of floors, not per pick
-    vetoed: new Set(),      // you took these OUT of the queue; never put them back
-    selfRemoved: new Set(), // removals WE just made, so they are not read as yours
     baseline: null,         // worst-starter projection per position; computed once
     teamRosters: {},        // drafter name -> [players], accumulated from the feed
     slotNames: {},          // draft slot -> drafter name, learned from round one
@@ -1240,8 +1238,7 @@
     const avail = [...state.pool.values()]
       .filter((p) => !state.taken.has(key(p.name, p.pos)))
       .filter((p) => !mine.has(key(p.name, p.pos)))
-      .filter((p) => !planned.has(p.id))
-      .filter((p) => !state.vetoed.has(key(p.name, p.pos)));   // you took these out
+      .filter((p) => !planned.has(p.id));
 
     // A required position we can no longer defer overrides everything.
     const missing = Object.entries(CFG.STARTERS)
@@ -1537,26 +1534,6 @@
       for (const p of live) {
         if (!weQueued(p)) state.human.add(key(p.name, p.pos));
       }
-      /**
-       * A player who was in the queue, is not now, and was never drafted did not
-       * leave on his own — you took him out. That is an instruction, so he is
-       * vetoed and never queued again. Without this the planner simply put him
-       * back on the next cycle, which made removing anything by hand impossible.
-       *
-       * Our own removals are excluded: reconciliation drops entries constantly and
-       * none of that is a decision by you.
-       */
-      const now = new Set(live.map((p) => key(p.name, p.pos)));
-      for (const prev of state.queue || []) {
-        if (!prev || !prev.pos) continue;
-        const k = key(prev.name, prev.pos);
-        if (now.has(k) || state.taken.has(k)) continue;
-        if (state.selfRemoved.has(k)) { state.selfRemoved.delete(k); continue; }
-        if (!state.vetoed.has(k)) {
-          state.vetoed.add(k);
-          say(`you removed ${prev.name} (${prev.pos}) — will not queue again`);
-        }
-      }
     }
     state.queueSynced = true;
 
@@ -1774,7 +1751,6 @@
       await sleep(700);
       if (queueCount() >= before) break;
       removed.push(`${info.name} (${info.pos})`);
-      state.selfRemoved.add(key(info.name, info.pos));   // ours, not a veto by you
       state.queue = state.queue.filter((q) => !(q.name === info.name && q.pos === info.pos));
     }
     if (mustSwitch && /^Picks$/i.test(was) && tabs.picks) { tabs.picks.click(); await sleep(250); }

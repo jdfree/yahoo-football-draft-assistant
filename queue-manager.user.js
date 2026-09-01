@@ -2631,14 +2631,14 @@
       return;
     }
 
-    const here = draftPosition().overall;
-    let at = null;
-    for (const k of floors.keys()) {
-      if (k >= here && (at === null || k < at)) at = k;       // nearest still ahead
-    }
-    if (at === null) for (const k of floors.keys()) if (at === null || k > at) at = k;
-    const byPos = floors.get(at);
-    if (!byPos) return;
+    // Show the floors CURRENTLY driving valuation — the latest projection — not the
+    // nearest horizon still ahead. Those differ: at pick 37 the horizons held were
+    // 34, 51 and 62, the strip showed 34 because it was the nearest ahead, and the
+    // bar in use was 62. A strip that reports a horizon nothing is using is worse
+    // than no strip.
+    const at = state.proj ? state.proj.target : [...floors.keys()].sort((a, b) => b - a)[0];
+    const byPos = (state.proj && state.proj.byPos) || floors.get(at);
+    if (!byPos || at == null) return;
 
     if (!floorsEl) {
       floorsEl = document.createElement('div');

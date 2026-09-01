@@ -139,6 +139,7 @@ to a genuine starting need.
 | **Q5** | Reorder by drag | Order is corrected by **dragging**, never by removing and re-adding. Queue rows carry dnd-kit handles with a documented keyboard protocol (space to lift, arrows to move, space to drop). Selection sort: at most one move per slot, and no player who belongs in the queue is ever removed from it. | `ENFORCE_QUEUE_ORDER: true` |
 | **Q6** | Position limits | No position may occupy more than `QUEUE_SIZE − 2` queue slots, so a run on one position cannot leave the whole queue useless. K and DEF are capped at 2, or 1 when our picks are back-to-back. | — |
 | **Q7** | Veto | Pull the same player out of the queue N times and he is never queued again. Detected in two passes: a disappearance is only *suspected*, then counted on the next pass once the picks feed has caught up and he is still undrafted — otherwise a player drafted a moment earlier is blamed on the human. | `VETO_AFTER: 3` |
+| **Q9** | Floors strip | A bar across the bottom of the window showing the horizon and the floor at each position — the numbers every valuation rests on. Reports the floors **currently in use** (the latest projection), not the nearest horizon ahead; those differ, and a strip reporting a horizon nothing uses is worse than none. | `SHOW_FLOORS: true` |
 | **Q8** | Turn safety | Nothing touches the queue while our clock is running. Every loop checks and stops. | — |
 
 There is deliberately **no** "this entry is the human's" concept. Three attempts
@@ -168,9 +169,12 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `PLAYOFF_WEEKS` | 15, 16, 17 | V9 |
 | `PLAYOFF_SWING` | 0.10 | V9 |
 | `ENFORCE_QUEUE_ORDER` | true | Q5 |
+| `SHOW_FLOORS` | true | Q9 |
 | `VETO_AFTER` | 3 | Q7 |
 | `LATE_ONLY` | *(empty)* | our own K/DEF gate, off — the math decides |
 | `AUTOPICK_AT_SECONDS` | 0 | last-second safety pick, off |
+
+The old queue overlay is gone; the floors strip replaced it.
 
 There are no other knobs. `HORIZON_ROUNDS`, `SKIP_ROUNDS` and `ADP_SIGMA` are
 gone, along with the ADP survival model they fed: floors are seeded before

@@ -1577,18 +1577,20 @@
                why: `${p.proj} - repl ${bar.toFixed(1)} = ${raw.toFixed(1)} shown;` +
                     ` rank x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` +
                     (benchBoost !== 1 ? ` proj+${Math.round((benchBoost - 1) * 100)}%(bench)` : '') };
-    // Rank by ROLE first, then by value inside the role.
+    // Rank on VALUE, with role expressed as a weight rather than a hard tier.
     //
-    // The backup RB/WR multiplier is meant to say that bench depth matters more at
-    // RB and WR than at QB or TE — a comparison among BENCH players. Folded into
-    // one flat sort it also let a backup outrank a player filling an empty starting
-    // slot, because x3 against the x0.2 reserve weight collapses the configured
-    // 5:1 starter-to-bench preference down to 1.67:1. That is what put backups
-    // above receivers with visibly higher surplus while a starting WR slot sat
-    // empty. Tiering keeps the multiplier doing its job without letting it
-    // overturn the roster's actual needs, and it also makes the displayed value
-    // monotonic within each tier, so the queue reads the way the numbers look.
-    }).sort((a, b) => (a.tier - b.tier) || (b.sortVal - a.sortVal));
+    // Tiering every starter above every bench player was too blunt in both
+    // directions. It was added because the old x3 backup multiplier let backups
+    // leapfrog genuine starters; but it then meant a defense worth +3.3, filling
+    // the last empty starting slot, outranked a running back worth +80 who would
+    // sit on the bench. No sensible drafter makes that trade.
+    //
+    // The weights already price the trade-off proportionally: at WEIGHT_RESERVE
+    // 0.2 a bench player must be worth five times a starter's surplus to pass him,
+    // so 80 x 0.2 = 16 beats 3.3 x 1.0, while a marginal bench player still loses
+    // to a real starting need. must-fill keeps its Infinity and so still wins
+    // outright when a roster slot has become mandatory.
+    }).sort((a, b) => b.sortVal - a.sortVal);
   }
 
   /**

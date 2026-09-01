@@ -131,12 +131,13 @@ TE for tight-end scarcity already spent on the dedicated TE slot: live, with RB
 and TE both full, it ranked T. Warren (TE, 162.4 proj) above D. Montgomery (RB,
 185.2 proj) for the same flex slot.
 
-**Ranking is by role first, then value.** Bench players never outrank the starting
-lineup. The backup RB/WR multiplier says depth matters more at those positions
-than at QB or TE — a comparison among bench players — but folded into one flat
-sort it also collapsed the configured 5:1 starter-to-bench preference to 1.67:1
-and pushed backups above receivers with visibly higher surplus while a starting WR
-slot sat empty. Starter and flex share a tier, since both play every week.
+**Ranking is by value, with role expressed as a weight rather than a hard rule.**
+At `WEIGHT_RESERVE` 0.2 a bench player must be worth five times a starter's
+surplus to pass him. That keeps a mediocre backup below a real starting need,
+while still letting a genuinely large gap win: a running back worth +80 on the
+bench outranks a defense worth +3.3 filling the last starting slot, which is the
+trade any sensible drafter makes. Tiering starters strictly above bench players
+got that backwards.
 
 Attrition before your next turn comes from the projection (see
 [PROJECTION.md](PROJECTION.md)), with an ADP survival model as fallback. The result

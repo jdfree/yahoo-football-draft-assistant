@@ -89,4 +89,7 @@ Fallbacks: Jeremiyah Love (RB, v71) · Zay Flowers (WR, v62)
 - Force any unfilled required position once rounds remaining equals slots missing.
   Permitting a defense late is not the same as requiring one.
 - Exclude players already rostered — re-picking one is a silent no-op.
-- Kickers and defenses in the final two rounds only.
+- Do not hold kickers and defenses to the final rounds by convention. Their
+  replacement is measured against the END of the draft — "one now versus one with
+  my last pick" — so an early defense has to out-surplus every skill player to be
+  taken at all. Let the arithmetic decide; roster caps stop a second one.

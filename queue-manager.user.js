@@ -80,11 +80,19 @@
     // that never triggers.
     AUTOPICK_AT_SECONDS: 0,
 
-    // Kickers and defenses are barred until the last two rounds. Their surplus
-    // over "wait until the end" is real but small, and spending an early pick on
-    // one costs a starter-quality skill player worth far more. Without this gate a
-    // live draft queued a defense in round two.
-    LATE_ONLY: ['K', 'DEF'],
+    // Positions barred until the last two rounds. EMPTY BY DEFAULT: holding
+    // kickers and defenses to the end is convention, not arithmetic, and the model
+    // already prices them honestly — their replacement is measured against the END
+    // of the draft ("one now versus one with my last pick"), not the next couple of
+    // rounds, so an early defense has to beat every skill player on surplus to be
+    // queued at all. Letting the convention override that costs real value: in a
+    // live draft the best defense was worth 16.74 in round 9, the gate held it to
+    // round 14, and by then the best available was worth 6.34 — while the bench
+    // players queued instead were worth about 2.
+    //
+    // Set to ['K', 'DEF'] to restore the conventional behaviour. Roster caps still
+    // prevent a second kicker or defense either way.
+    LATE_ONLY: [],
 
     // --- replacement horizon -------------------------------------------------
     // How many rounds to assume a position goes undrafted if you pass on it now.

@@ -15,6 +15,24 @@ node fetch-team-context.js --playoffs 15,16,17 --swing 0.10
 # 3. Set CFG.SLOT and CFG.TEAMS, leave DRY_RUN true, run a mock, read the log.
 ```
 
+## `LATE_ONLY` — positions held to the last two rounds
+
+Default `[]` — nothing is held back.
+
+Holding kickers and defenses until the end is convention, not arithmetic. The
+model already prices them honestly: their replacement level is measured against
+the **end of the draft** rather than the next couple of rounds, because the real
+choice is "one now versus one with my last pick". That makes an early defense
+have to beat every skill player on surplus before it is queued at all.
+
+Overriding that with a hard gate costs value. In a live draft the best defense
+was worth 16.74 in round 9; the gate held it to round 14, by which point the best
+available was worth 6.34 — while the bench players queued in the meantime were
+worth about 2.
+
+Set to `['K', 'DEF']` to restore the conventional behaviour. Roster caps prevent
+a second kicker or defense either way.
+
 ## Inspecting the preprocessing
 
 Two artifacts, both written by scripts rather than printed:

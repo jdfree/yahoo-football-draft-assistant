@@ -547,6 +547,22 @@
     }
   }
 
+  // Yahoo leaves the autopick toast in the DOM after it is closed — position:fixed,
+  // full text intact, simply not rendered. Matching on text alone therefore found a
+  // phantom dialog forever and re-clicked its close button every two seconds. Require
+  // the node to actually occupy space and be painted.
+  function isVisible(el) {
+    if (!el.offsetParent && getComputedStyle(el).position !== 'fixed') return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    if (r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) return false;
+    for (let n = el, i = 0; n && n !== document.body && i < 12; n = n.parentElement, i++) {
+      const cs = getComputedStyle(n);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) return false;
+    }
+    return true;
+  }
+
   function ensureLiveDrafting() {
     let acted = false;
 
@@ -555,7 +571,8 @@
     // source that mentions autopick, which is pure noise.
     const carriers = [...document.querySelectorAll('div,section')].filter((e) => {
       const t = e.innerText || '';
-      return /autopick mode|due to inactivity/i.test(t) && t.length < 400;
+      if (!/autopick mode|due to inactivity/i.test(t) || t.length >= 400) return false;
+      return isVisible(e);
     });
 
     if (carriers.length) {
@@ -1195,13 +1212,13 @@
     return Math.max(1, CFG.QUEUE_SIZE - 2);
   };
 
-  function planQueue(n) {
+  function planQueue(n, seed = null) {
     const b2b = backToBack();
     // Players ALREADY queued must count as provisional roster additions. Refilling
     // one slot at a time re-planned against the roster alone, so each pass added
     // another defense: a live queue reached DEF,K,DEF,DEF,K and autodraft put two
     // defenses on the roster before it was caught.
-    const queued = queueView().filter((p) => p && p.pos && p.pos !== '?');
+    const queued = (seed || queueView()).filter((p) => p && p.pos && p.pos !== '?');
     const chosen = [];
     const sequence = queued.slice();
 
@@ -1419,8 +1436,20 @@
   }
 
   /** Clear the whole queue — used after WE draft, since our needs changed. */
+  /**
+   * Our own pick invalidates the queue's premise, so it is rebuilt against the new
+   * roster — but as a diff, not a purge. Emptying the queue and re-adding was
+   * observed re-queueing the identical five players, and it leaves the queue at
+   * zero for several seconds; if the clock expires in that window Yahoo drafts off
+   * its own rankings instead of ours. Plan the queue afresh (seeded with nothing,
+   * so current contents get no incumbency), keep whatever still earns its place,
+   * and drop only the rest. Refill closes the gap.
+   */
   async function purgeQueue() {
-    const out = await removeFromQueue((pl) => isOurs(pl));   // yours stays put
+    const plan = planQueue(CFG.QUEUE_SIZE, []);
+    const keep = new Set(plan.map((p) => key(p.name, p.pos)));
+    const out = await removeFromQueue((pl) => !isOurs(pl) && !keep.has(key(pl.name, pl.pos)));
+    say(`rebuild: kept ${queueCount()}, dropped ${out.length}`);
     await clearFilters();
     return out.length;
   }

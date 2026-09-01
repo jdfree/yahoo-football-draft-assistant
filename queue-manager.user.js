@@ -1714,8 +1714,15 @@
     state.queue = [];
     let ranked;
     try { ranked = rankAvailable([]); } finally { state.queue = saved; }
+    // Keyed by Yahoo id FIRST. Abbreviated names collide — the pool held two
+    // "J. Daniels" at QB, one projecting 303.79 and one 18.1 — and a Map keyed on
+    // name+position silently keeps whichever came last. The queue row carried the
+    // right id all along, so the ranking said +19.49 while the queue displayed
+    // -266.2 for the same player: 18.1 measured against a 284.3 floor.
+    const byId = new Map(ranked.filter((p) => p.id).map((p) => [p.id, p]));
     const byKey = new Map(ranked.map((p) => [key(p.name, p.pos), p]));
-    return saved.map((q) => byKey.get(key(q.name, q.pos))
+    return saved.map((q) => (q.id && byId.get(q.id))
+      || byKey.get(key(q.name, q.pos))
       || Object.assign({}, q, { val: null }));
   }
 

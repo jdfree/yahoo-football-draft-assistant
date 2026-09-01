@@ -1639,7 +1639,19 @@
     const mustSwitch = !/^Queue/i.test(was);
     if (mustSwitch && tabs.queue) { tabs.queue.click(); await sleep(450); }
 
-    const live = liveQueue() || [];
+    /**
+     * An unreadable queue is NOT an empty queue.
+     *
+     * liveQueue() returns null unless the Queue tab is the active one, and this
+     * used to coerce that to []. The next read then saw every row as a brand-new
+     * arrival and flagged the lot as YOURS — which is how players the assistant
+     * queued itself, M. Pittman Jr. and J. Williams among them, acquired a mark
+     * that means "never reorder, never remove". Bail out instead and keep what we
+     * already know.
+     */
+    const live = liveQueue();
+    if (!live) return state.queue;
+    if (!live.length && queueCount() > 0) return state.queue;   // mid-render
 
     /**
      * Work out which entries the human added, so reconciliation can leave those

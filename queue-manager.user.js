@@ -1838,7 +1838,11 @@
     // The ranking now includes players already queued, so filter them here — this
     // is the step that actually adds, and it must not re-add what is present.
     const present = new Set(queueView().filter(Boolean).map((p) => key(p.name, p.pos)));
-    const plan = planQueue(CFG.QUEUE_SIZE).filter((p) => !present.has(key(p.name, p.pos))).slice(0, need);
+    // The SAME plan reconciliation uses — unseeded. Seeding from the live queue
+    // produced a different plan to reconcile's, so the two disagreed permanently:
+    // reconcile dropped six as "out of order", refill put them back in its own
+    // order, and the pair oscillated every cycle.
+    const plan = planQueue(CFG.QUEUE_SIZE, []).filter((p) => !present.has(key(p.name, p.pos))).slice(0, need);
     if (!plan.length) return;
     say(`queue ${queueCount()}/${CFG.QUEUE_SIZE} — adding ${plan.length}`);
     for (const p of plan) {

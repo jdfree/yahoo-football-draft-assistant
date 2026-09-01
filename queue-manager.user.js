@@ -957,6 +957,14 @@
   function projectedChoice(roster, pool, pickNo, base, reserveBase) {
     const held = (pos) => roster.filter((r) => r.pos === pos).length;
 
+    // One bar for every flex-eligible backup: the highest of the three reserve
+    // bars, since a bench RB, WR or TE all compete for the same flex spot.
+    let flexReserveBar = null;
+    for (const q of FLEX_POS) {
+      const v = reserveBase[q];
+      if (v != null && (flexReserveBar === null || v > flexReserveBar)) flexReserveBar = v;
+    }
+
     // O15 — how many of a position a team will ever carry. Nobody rosters three
     // quarterbacks or a second kicker, and without this the model spent whole
     // rounds stacking one position. A roster that already exceeds a limit through
@@ -987,9 +995,18 @@
       // any kind: the difference between positions lives entirely in how deep
       // their two bars sit.
       const startingHere = held(p.pos) < (CFG.STARTERS[p.pos] || 0);
+      // A BACKUP at RB, WR or TE is measured against the FLEX reserve bar — the
+      // highest of the three — because all three compete for the same flex spot.
+      // The same rule as V14 on our side, and for the same reason: measuring each
+      // against his own position's reserve bar credits whichever position has been
+      // picked over hardest. With reserve bars of RB 72.84, WR 102.96 and TE 84.56,
+      // a mediocre tight end scored against 84.56 and looked worth taking; against
+      // the flex bar of 102.96 he does not.
       const bar = startingHere
         ? (base[p.pos] ?? p.proj)
-        : (reserveBase[p.pos] ?? base[p.pos] ?? p.proj);
+        : (flexReserveBar !== null && FLEX_POS.includes(p.pos)
+            ? flexReserveBar
+            : (reserveBase[p.pos] ?? base[p.pos] ?? p.proj));
       const weight = startingHere ? CFG.WEIGHT_STARTER : CFG.WEIGHT_RESERVE;
       const score = (p.proj - bar) * weight;
 

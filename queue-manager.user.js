@@ -851,7 +851,11 @@
   function subsequentPick(currentPick) {
     const imminent = ourNextPickAfter(currentPick);      // the pick in hand
     const round = Math.ceil(imminent / CFG.TEAMS);
-    return ourPickInRound(round + CFG.HORIZON_ROUNDS);
+    // Never look past the end of the draft. Unclamped, the last rounds targeted
+    // picks that do not exist — 216 in a 210-pick draft — and the simulation then
+    // removed players for picks nobody ever makes, depressing those floors.
+    const lastPick = CFG.TEAMS * rosterSize();
+    return Math.min(ourPickInRound(round + CFG.HORIZON_ROUNDS), lastPick);
   }
 
   /** Starting slots a roster still has open, as positions a pick could fill. */
@@ -1136,7 +1140,11 @@
     state.proj = { round: rd, teams: CFG.TEAMS, target: sim.target, byPos };
     const shown = Object.entries(byPos)
       .map(([pos, l]) => `${pos} ${l.length ? l[0].proj : '-'}`).join(', ');
-    say(`projection for round ${rd} (to pick ${sim.target}): ${shown}`);
+    // Label with the round the horizon is anchored to — the round of the pick we
+    // are about to make — not the room's current round; past our own pick in a
+    // round those differ, and the log read "round 13" while measuring from 14.
+    const anchor = Math.ceil(ourNextPickAfter(currentPick) / CFG.TEAMS);
+    say(`projection from round ${anchor} (to pick ${sim.target}): ${shown}`);
     return state.proj;
   }
 

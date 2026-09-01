@@ -1491,7 +1491,12 @@
     return best;
   }
 
-  /** Floors from the deepest horizon we have projected, for bench valuation. */
+    // Computed once per ranking: the best player still on the board at each
+    // position. V13 clamps every bar to it, so no bar can promise more than the
+    // board holds.
+    const liveBest = bestAvailableNow();
+
+    /** Floors from the deepest horizon we have projected, for bench valuation. */
     const deepestFloors = () => {
       let best = null, bestAt = -1;
       for (const [at, byPosn] of state.floors) if (at > bestAt) { bestAt = at; best = byPosn; }

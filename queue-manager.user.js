@@ -1494,12 +1494,29 @@
         // still be around later and the pick is better spent elsewhere. Indexing a
         // ladder made those numbers positive by measuring against a bar nobody
         // actually faces, which hid exactly that signal.
+        // The floor alone, for every role. NOT max(floor, baseline).
+        //
+        // Surplus over the floor means "what I gain by taking him now instead of
+        // waiting". Surplus over the worst-starter baseline means "how much better
+        // than a replacement starter". Those are different quantities, and taking
+        // the greater of the two silently switched between them, so the same number
+        // meant different things at different moments — a receiver in round 13 read
+        // -40.8 because the bar had quietly stopped being "what you'd get by
+        // waiting" and become the baseline instead.
+        //
+        // The scarcity the baseline was added for is handled better by the
+        // projection itself. If every team already holds a quarterback the
+        // simulation takes none, so the floor is the current best quarterback,
+        // self-exclusion leaves only a small surplus, and he is not queued. Once
+        // teams start on backups the floor drops, the surplus rises, and because he
+        // fills an empty starting slot he carries full starter weight — the urgency
+        // appears on its own, from the actual board rather than a preseason
+        // constant.
+        //
+        // The baseline is still computed, and still used as the opponent model's
+        // positional yardstick, where our own horizons do not transfer.
         const survivor = projected.byPos[pos].find((p) => p.id !== exceptId);
-        if (survivor) {
-          // A starting slot is never worth less than replacement-level starter.
-          const floorBeneath = state.baseline ? (state.baseline[pos] ?? -Infinity) : -Infinity;
-          return Math.max(survivor.proj, floorBeneath);
-        }
+        if (survivor) return survivor.proj;
       }
       // Fallback while the simulation has no opinion — a position it never
       // reached. One deadline for everyone.

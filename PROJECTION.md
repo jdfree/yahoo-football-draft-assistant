@@ -11,7 +11,27 @@ produce that number.
 
 ---
 
-## 1. League baseline — computed once, never recomputed
+## 1. League baseline — computed once, for the opponent model
+
+The baseline no longer sets the bar for our own valuation. Surplus over the floor
+means "what I gain by taking him now instead of waiting"; surplus over the
+baseline means "how much better than a replacement starter". Taking the greater
+of the two switched between those quantities silently, so the same number meant
+different things at different moments — a receiver in round 13 read −40.8 because
+the bar had stopped being "what you'd get by waiting".
+
+The scarcity it was added for is handled better by the projection. If every team
+already holds a quarterback the simulation takes none, so the floor is the current
+best quarterback, self-exclusion leaves only a small surplus, and he is not
+queued. Once teams start on backups the floor drops, the surplus rises, and
+because he fills an empty starting slot he carries full starter weight — urgency
+appears from the actual board rather than a preseason constant.
+
+It is still computed, because the opponent simulation needs a positional yardstick
+to weigh a quarterback against a running back for someone else's roster, and our
+floors are defined against our own horizon so they do not transfer.
+
+## How the baseline is computed
 
 Establish what a *starting-calibre* player looks like at each position. This is a
 property of the league's shape, not of who happens to be undrafted, so it is
@@ -105,10 +125,7 @@ away by a projection taken at the top of the round.
 Every horizon's floors are kept, not just the latest, because starters and bench
 players are measured against different ones:
 
-- a **starter** against the higher of the near floor and the worst-starter
-  baseline — the floor alone is not enough, since late on the best player left at
-  a position can be well below starting calibre, and measuring against him would
-  make a replacement-level body look like an upgrade;
+- a **starter** against the near floor;
 - a **bench player** against the deepest horizon projected, since he is competing
   for a late pick rather than this one.
 

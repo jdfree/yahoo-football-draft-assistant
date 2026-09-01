@@ -117,14 +117,30 @@ only stable key in the room. Names are abbreviated to a first initial and collid
 ## How it values a player
 
 ```
-raw   = projected points − best projection at that position still expected at your next turn
+raw   = projected points − the bar for the slot he would fill
 value = raw × 1.0   fills an empty starting slot
         raw × 0.9   fills flex
         raw × 0.2   bench only
 ```
 
-Attrition before your next turn is estimated from ADP over the snake gap. The
-result handles unusual scoring on its own: a position where every startable player
+**The bar depends on the slot, not the position.** For a dedicated slot it is the
+best player at that position still expected at your next turn. For *flex* it is
+the best RB, WR or TE — because if you pass on a tight end for flex, your
+alternative is not another tight end. Using the position's own bar there credits a
+TE for tight-end scarcity already spent on the dedicated TE slot: live, with RB
+and TE both full, it ranked T. Warren (TE, 162.4 proj) above D. Montgomery (RB,
+185.2 proj) for the same flex slot.
+
+**Ranking is by role first, then value.** Bench players never outrank the starting
+lineup. The backup RB/WR multiplier says depth matters more at those positions
+than at QB or TE — a comparison among bench players — but folded into one flat
+sort it also collapsed the configured 5:1 starter-to-bench preference to 1.67:1
+and pushed backups above receivers with visibly higher surplus while a starting WR
+slot sat empty. Starter and flex share a tier, since both play every week.
+
+Attrition before your next turn comes from the projection (see
+[PROJECTION.md](PROJECTION.md)), with an ADP survival model as fallback. The result
+handles unusual scoring on its own: a position where every startable player
 projects about the same is correctly valued near zero, however large the raw
 numbers look.
 

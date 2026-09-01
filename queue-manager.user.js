@@ -687,6 +687,14 @@
 
   /** Positions a flex slot accepts. */
   const FLEX_POS = ['RB', 'WR', 'TE'];
+  // Fills a mandatory hole > goes in the starting lineup > sits on the bench.
+  //
+  // Flex shares a tier with starter deliberately: flex IS a starting slot, so
+  // ranking every dedicated-slot player above every flex player would be an
+  // arbitrary preference between two spots that both play every week. Within the
+  // tier, surplus decides. What the tier does prevent is a bench player
+  // outranking either, which is what the backup RB/WR multiplier was doing.
+  const ROLE_TIER = { 'must-fill': 0, starter: 1, flex: 1, reserve: 2 };
 
   /**
    * League baseline: the projection of a replacement-level STARTER at each
@@ -1165,7 +1173,7 @@
         // tick renders the overlay directly it surfaced as an opaque tick ERROR.
         .map((p) => ({ ...p, val: Infinity, sortVal: Infinity, raw: p.proj,
                        playoffDelta: 0, playoffMod: 1, byeMod: 1, teamMod: 1,
-                       depthMult: 1, role: 'must-fill',
+                       depthMult: 1, role: 'must-fill', tier: ROLE_TIER['must-fill'],
                        why: `must-fill ${missing[0]}` }));
     }
 
@@ -1284,19 +1292,35 @@
     const legal = (p) => count(p.pos) < CFG.CAPS[p.pos];
     const isGated = (p) => CFG.LATE_ONLY.includes(p.pos) && rd < size - 1;
 
+    /**
+     * The bar for the FLEX slot is not the bar at the player's own position.
+     *
+     * A flex slot is one slot contested by every RB, WR and TE. If you pass on a
+     * tight end for it, your alternative is not another tight end — it is the best
+     * flex-eligible player on the board, whoever that is. Measuring a TE for flex
+     * against the TE replacement level credits him for tight-end scarcity that was
+     * already spent on the dedicated TE slot, and that scarcity bar is far lower
+     * than RB's. Live consequence: with RB 2/2 and TE 1/1 filled, T. Warren (TE,
+     * 162.4 proj) outranked D. Montgomery (RB, 185.2 proj) for the same flex slot.
+     */
+    const flexReplacement = (exceptId) =>
+      Math.max(...FLEX_POS.map((pos) => replacement(pos, exceptId)));
+
     return avail.filter(legal).map((p) => {
       const teamMod = sameTeamMultiplier(p, have);
       const effProj = p.proj * teamMod;          // the penalty lands on the projection
-      const raw = effProj - replacement(p.pos, p.id);
 
       let weight = CFG.WEIGHT_STARTER, role = 'starter';
       if (count(p.pos) >= CFG.STARTERS[p.pos]) {
-        if (['RB', 'WR', 'TE'].includes(p.pos) && flexUsed < CFG.FLEX) {
+        if (FLEX_POS.includes(p.pos) && flexUsed < CFG.FLEX) {
           weight = CFG.WEIGHT_FLEX; role = 'flex';
         } else {
           weight = CFG.WEIGHT_RESERVE; role = 'reserve';
         }
       }
+
+      // Role decides which bar applies, so it must be settled first.
+      const raw = effProj - (role === 'flex' ? flexReplacement(p.id) : replacement(p.pos, p.id));
 
       const pm = playoffModifier(p.team);
       const bm = byeMultiplier(p, have);
@@ -1313,12 +1337,24 @@
       // Queue preference still uses the COMBINED figure — schedule included.
       return { ...p, raw: +raw.toFixed(2), val: +val.toFixed(2),
                playoffDelta: +playoffDelta.toFixed(2),
+               tier: ROLE_TIER[role] ?? 2,
                sortVal: +(val * pm * depth).toFixed(2), depthMult: depth, role,
                gated: isGated(p),
                playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3), teamMod: +teamMod.toFixed(3),
                why: `${p.proj} - repl ${(p.proj - raw).toFixed(1)} = ${raw.toFixed(1)}` +
                     ` x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` };
-    }).sort((a, b) => b.sortVal - a.sortVal);   // rank on the weighted value
+    // Rank by ROLE first, then by value inside the role.
+    //
+    // The backup RB/WR multiplier is meant to say that bench depth matters more at
+    // RB and WR than at QB or TE — a comparison among BENCH players. Folded into
+    // one flat sort it also let a backup outrank a player filling an empty starting
+    // slot, because x3 against the x0.2 reserve weight collapses the configured
+    // 5:1 starter-to-bench preference down to 1.67:1. That is what put backups
+    // above receivers with visibly higher surplus while a starting WR slot sat
+    // empty. Tiering keeps the multiplier doing its job without letting it
+    // overturn the roster's actual needs, and it also makes the displayed value
+    // monotonic within each tier, so the queue reads the way the numbers look.
+    }).sort((a, b) => (a.tier - b.tier) || (b.sortVal - a.sortVal));
   }
 
   /**
@@ -1857,7 +1893,8 @@
       queue: state.queue.map((q) => `${q.name} ${q.pos}`),
       top25: ranked.slice(0, 25).map((p) => ({
         name: p.name, pos: p.pos, team: p.team, bye: p.bye, proj: p.proj, adp: p.adp,
-        raw: p.raw, val: p.val, role: p.role, playoffMod: p.playoffMod, byeMod: p.byeMod,
+        raw: p.raw, val: p.val, role: p.role, tier: p.tier, sortVal: p.sortVal,
+        depthMult: p.depthMult, playoffMod: p.playoffMod, byeMod: p.byeMod,
       })),
       pool: [...state.pool.values()].map(({ row, ...p }) => p),
       log: LOG,

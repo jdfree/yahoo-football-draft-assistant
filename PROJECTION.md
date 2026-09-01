@@ -164,6 +164,13 @@ would compound into the next run and drift further from the draft with every pas
 So the simulation answers "what will I be able to get instead, if I pass", and the
 candidate is worth the difference.
 
+**For the flex slot the question is asked across positions.** Flex is one slot
+contested by every RB, WR and TE, so the alternative to passing is the best
+flex-eligible player left, not the best at the candidate's own position. Measuring
+a tight end for flex against the tight-end bar credits him for scarcity that was
+already spent on the dedicated TE slot, and that bar is far below RB's — which is
+how a 162-point TE came to outrank a 185-point RB for the same slot.
+
 ---
 
 ## Why the previous model failed

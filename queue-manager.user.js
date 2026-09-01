@@ -1187,11 +1187,16 @@
     const count = (p) => have.filter((x) => x.pos === p).length;
     const mine = new Set(have.map((h) => key(h.name, h.pos)));
 
+    // Players already in the queue STAY in the ranking. Excluding them boxed us
+    // out of our own best options: planQueue could never name a player we had
+    // queued, so the ideal plan and the live queue shared nothing, every entry
+    // looked stale to reconciliation, and the whole queue was torn down and
+    // rebuilt every cycle. Callers that add to the queue skip what is already
+    // there themselves.
     const avail = [...state.pool.values()]
       .filter((p) => !state.taken.has(key(p.name, p.pos)))
       .filter((p) => !mine.has(key(p.name, p.pos)))
-      .filter((p) => !state.queue.some((q) => key(q.name, q.pos) === key(p.name, p.pos))
-                  && !planned.has(p.id));
+      .filter((p) => !planned.has(p.id));
 
     // A required position we can no longer defer overrides everything.
     const missing = Object.entries(CFG.STARTERS)
@@ -1830,7 +1835,10 @@
   async function refill() {
     const need = CFG.QUEUE_SIZE - queueCount();
     if (need <= 0) return;
-    const plan = planQueue(need);
+    // The ranking now includes players already queued, so filter them here — this
+    // is the step that actually adds, and it must not re-add what is present.
+    const present = new Set(queueView().filter(Boolean).map((p) => key(p.name, p.pos)));
+    const plan = planQueue(CFG.QUEUE_SIZE).filter((p) => !present.has(key(p.name, p.pos))).slice(0, need);
     if (!plan.length) return;
     say(`queue ${queueCount()}/${CFG.QUEUE_SIZE} — adding ${plan.length}`);
     for (const p of plan) {

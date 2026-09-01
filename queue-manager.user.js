@@ -889,7 +889,6 @@
   function projectedChoice(roster, pool, pickNo) {
     const base = state.baseline || {};
     const open = openSlots(roster);
-    const fillingStarters = open.size > 0;
 
     // A team will not take a third player at one position sharing a bye week.
     const byeBlocked = (p) => p.bye != null &&
@@ -904,11 +903,21 @@
     const roundOfPick = Math.ceil(pickNo / CFG.TEAMS);
     const lateEnough = roundOfPick > rosterSize() - CFG.OPPONENT_LATE_K_DEF;
 
+    // Slots a team would actually fill right now. By the middle rounds most teams
+    // have everything but a kicker and a defense left open, and those are the two
+    // they will not take yet — so "still filling starters" has to mean starters
+    // they would REALLY take. Without this those teams matched nothing at all and
+    // drafted nobody: a 38-pick horizon simulated 2 picks and the floors barely
+    // moved. A team in that position takes bench depth, which is what happens.
+    const fillable = new Set([...open].filter((pos) =>
+      lateEnough || (pos !== 'K' && pos !== 'DEF')));
+    const fillingStarters = fillable.size > 0;
+
     let best = null, bestScore = -Infinity;
     for (const p of pool) {
       if (byeBlocked(p)) continue;
       if (!lateEnough && (p.pos === 'K' || p.pos === 'DEF')) continue;
-      if (fillingStarters && !open.has(p.pos)) continue;
+      if (fillingStarters && !fillable.has(p.pos)) continue;
       if ((CFG.CAPS[p.pos] || 99) <= roster.filter((r) => r.pos === p.pos).length) continue;
 
       let score = p.proj - (base[p.pos] ?? p.proj);

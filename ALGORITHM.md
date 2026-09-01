@@ -26,7 +26,7 @@ become the **next projection's** bar. S4 survives only to seed the first run.
 | **S1** | Pool read | Six position sweeps of the player table, top 100 each. Captures Yahoo id, name, position, NFL team, projected points, ADP, bye. Projections are already scored under this league's rules, so scoring settings never have to be known. Read once — none of it changes during a draft. |
 | **S2** | Drafted read | Yahoo's `Drafted` pill widens the table to include players already taken. Swept the same way and merged into the pool **by id**, so arming mid-draft still sees the whole league. Names collide (two `J. Daniels` at QB, two `B. Robinson` at RB), so id is the only safe key. |
 | **S3** | League shape | Slot comes from the draft-room URL. Team count is *counted*, from the draft-order strip: a snake mirrors at the turn (`… Hugh, Ira, Ira, Hugh …`) and the mirror position is the team count. Verified by checking the first `2T` entries read the same in both directions. Fallback, if the strip is absent: every `ROUND r, PICK n` constrains `T` via `(r−1)·T < n ≤ r·T`, which resolves at the first pick of round 2. |
-| **S4** | Baseline | One number per position: the projection of the **Nth-best player there**, where `N = TEAMS × slots`. RB and WR get `FLEX_EXTRA_SLOTS` **more** than the lineup lists — half a slot each, because the flex is filled from them and they *share* it. Giving both a full extra slot added `2 × TEAMS` places where the league has `TEAMS`, and dropped the RB bar onto the 42nd back at 115.85, past a cliff costing twenty points in three players. Computed once, never recomputed. |
+| **S4** | Baselines — two sets | **Starter bar:** the Nth-best at that position where `N = TEAMS × starting slots`. No flex factor. **Reserve bar:** how deep a team plausibly goes for a backup — K and DEF get *no* reserve, so the same bar as the starter; QB and TE assume one; RB and WR assume one reserve **per starter**, since that is where depth is carried. At 14 teams: QB 14th/28th, RB 28th/56th, WR 28th/56th, TE 14th/28th, K and DEF 14th/14th. Computed once, never recomputed, and used **only** by the opponent model. |
 
 S4 is frozen because it describes the league's shape, not the current board.
 Recomputing it against a depleting pool walks it downward — RB fell 108.4 → 92.6
@@ -46,12 +46,12 @@ in one live draft purely because thirty-five players had been drafted in between
 | **O6** | *(retired)* | No explicit late gate for kickers and defenses. Against the static baseline their surplus is small and O15 caps them at one, so they fall to the late rounds on their own. | — |
 | **O7** | *(retired)* | No bench mode. With O5 gone there is no starter/bench distinction to fall back from. | — |
 | **O8** | Bye limit | A team will not take a third player at one position sharing a bye week. | — |
-| **O9** | Score | `surplus = projection − S4[position]`, against the **static** baseline. The rolling bar is retired: taking the previous projection's floor as the next bar fed the model its own output, and errors compounded — a position the model over-drafted saw its floor fall, which made it score higher next time, which drafted it harder still. TE floors ran 162 → 143 → 135 → 124 → 104 → 77 that way, and one projection took 15 tight ends in 36 picks. | `S4` |
-| **O10** | *(retired)* | No RB/WR multiplier in the opponent model. The deepened baseline (S4 gives those positions one extra slot) already expresses "backs and receivers go earlier than their lineup count suggests"; applying a multiplier on top double-counted it — a back scored 248 against a tight end's 71 and the model took all 39 of the first three rounds' picks at RB and WR. `BENCH_RB_WR_MULTIPLIER` still governs **V6** on our side, where a real starter/bench distinction exists. | — |
+| **O9** | Score | `score = (projection − bar) × weight`, where the **bar** is the starter bar if this pick would fill an open starting slot at that position and the reserve bar otherwise, and the **weight** is `WEIGHT_STARTER` or `WEIGHT_RESERVE` accordingly. There are no positional multipliers of any kind: the whole difference between positions lives in how deep their two bars sit. | `S4`, `WEIGHT_*` |
+| **O10** | *(retired)* | No RB/WR multiplier in the opponent model. The reserve bar at `TEAMS × 4` for RB and WR carries the same idea structurally, and stacking a multiplier on top double-counted it. `BENCH_RB_WR_MULTIPLIER` still governs **V6** on our side. | — |
 | **O11** | *(retired)* | There is no floor on the score. Clamping negatives to `+1` made every candidate below the bar exactly equal, so O12 stopped breaking ties and made the entire decision — 24 of 30 late picks went to running back, and with the rolling bar of O9 whole rounds went to a single position. A pick still happens: the best of several negative scores is still the best. | — |
 | **O12** | Tie-break | Ties go to running back. | — |
 | **O13** | Roster caps | A team will not exceed `CAPS[pos]` at any position. | `CAPS` |
-| **O16** | K/DEF timing | Opponents do not consider a kicker or defense until the last `SIM_KDEF_LAST_ROUNDS` rounds. Purely behavioural, and deliberately overriding the arithmetic: against the static baseline a top defense scores about **+20** and a top kicker **+9**, beating a mid-round back at +5, so without it the model drafted eight defenses inside picks 45–98. The surplus is real; the behaviour is not. A model of opponents has to model what they do. | `SIM_KDEF_LAST_ROUNDS: 3` |
+| **O16** | K/DEF timing | Opponents consider a kicker or defense only in the last `SIM_KDEF_LAST_ROUNDS` rounds — anchored to the final two picks of a roster. Behavioural, and deliberately overriding the arithmetic. | `SIM_KDEF_LAST_ROUNDS: 2` |
 | **O15** | Roster limits | How many of a position one team will ever carry: QB 2, TE 2, K 1, DEF 1. RB and WR are left to `CAPS`. A roster that already exceeds a limit through real picks simply takes nothing more there. | `SIM_ROSTER_LIMITS` |
 | **O14** | Output | Per position, a ladder of up to **12** surviving players in projection order. The head of each ladder is that position's **floor**. Every horizon computed is retained, keyed by target pick. | — |
 
@@ -170,10 +170,9 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `WEIGHT_STARTER` | 1.0 | V5a |
 | `WEIGHT_FLEX` | 0.9 | V5b |
 | `WEIGHT_RESERVE` | 0.2 | V5c |
-| `BENCH_RB_WR_MULTIPLIER` | 2 | V6 |
+| `BENCH_RB_WR_MULTIPLIER` | 2 | V6 (ours only) |
 | `SIM_ROSTER_LIMITS` | QB2 TE2 K1 DEF1 | O15 |
-| `FLEX_EXTRA_SLOTS` | 0.5 | S4 |
-| `SIM_KDEF_LAST_ROUNDS` | 3 | O16 |
+| `SIM_KDEF_LAST_ROUNDS` | 2 | O16 |
 | `PROJECT_AT_PICKS_AWAY` | 3 | O1 |
 | `SAME_TEAM_PENALTY` | 0 | V7 |
 | `BYE_FACTOR` | 0.5 | V8 |

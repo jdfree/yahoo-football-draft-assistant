@@ -73,11 +73,6 @@
     // rosters three quarterbacks or a second kicker. RB and WR are left to CAPS.
     SIM_ROSTER_LIMITS: { QB: 2, TE: 2, K: 1, DEF: 1 },
 
-    // Extra starting slots granted to RB and WR when computing S4, because the
-    // flex is filled from them. HALF a slot each, not one: the league has one flex
-    // per team and RB and WR share it. Giving both a full slot roughly doubled the
-    // deepening and dropped the RB bar past a cliff.
-    FLEX_EXTRA_SLOTS: 0.5,
 
     // O16 — how many rounds from the end an opponent will consider a kicker or a
     // defense. Purely behavioural: their surplus over baseline is genuinely large
@@ -85,7 +80,7 @@
     // model of opponents must model what they do rather than what the arithmetic
     // recommends. Each team needs exactly one of each, so this wants to be a
     // little wider than two.
-    SIM_KDEF_LAST_ROUNDS: 3,
+    SIM_KDEF_LAST_ROUNDS: 2,
 
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff
@@ -882,22 +877,33 @@
     const byPos = {};
     for (const p of state.baselinePool) (byPos[p.pos] = byPos[p.pos] || []).push(p.proj);
 
-    const baseline = {};
+    const baseline = {}, reserveBaseline = {};
     for (const [pos, slots] of Object.entries(CFG.STARTERS)) {
-      // The flex is SHARED, so RB and WR get half a slot each, not one apiece.
-      // A full extra slot to both added 2 x TEAMS spots when the league has only
-      // TEAMS flex places — roughly double what the flex justifies. Live, that put
-      // the RB bar on the 42nd back at 115.85, past a cliff where three players
-      // cost twenty points, against 138.60 at the 35th.
-      const extra = (pos === 'RB' || pos === 'WR') ? CFG.FLEX_EXTRA_SLOTS : 0;
-      const n = Math.round(CFG.TEAMS * (slots + extra));
+      // TWO bars per position, both for opponent projection only.
+      //
+      // STARTER — the Nth-best where N = TEAMS x starting slots. No flex factor:
+      // the flex is modelled by the reserve bar instead of by inflating this one.
+      //
+      // RESERVE — how deep a team plausibly goes for a backup at that position:
+      //   K, DEF   no reserve at all, so the same bar as the starter
+      //   QB, TE   one reserve
+      //   RB, WR   one reserve PER STARTER, since that is where depth is carried
       const list = (byPos[pos] || []).sort((a, b) => b - a);
       if (!list.length) continue;
-      baseline[pos] = list[Math.min(n, list.length) - 1];
+      const rank = (n) => list[Math.min(Math.round(n), list.length) - 1];
+
+      baseline[pos] = rank(CFG.TEAMS * slots);
+
+      const reserves = (pos === 'K' || pos === 'DEF') ? 0
+        : (pos === 'RB' || pos === 'WR') ? slots
+        : 1;
+      reserveBaseline[pos] = rank(CFG.TEAMS * (slots + reserves));
     }
     state.baseline = baseline;
+    state.reserveBaseline = reserveBaseline;
     state.baselineDone = true;
-    say(`baseline (worst starter, fixed for the draft): ${JSON.stringify(baseline)}`);
+    say(`baseline starters: ${JSON.stringify(baseline)}`);
+    say(`baseline reserves: ${JSON.stringify(reserveBaseline)}`);
 
     return baseline;
   }
@@ -943,7 +949,7 @@
    * drafter: fill starting slots first by surplus over a replacement starter, then
    * draft for depth with RB/WR weighted up.
    */
-  function projectedChoice(roster, pool, pickNo, base) {
+  function projectedChoice(roster, pool, pickNo, base, reserveBase) {
     const held = (pos) => roster.filter((r) => r.pos === pos).length;
 
     // O15 — how many of a position a team will ever carry. Nobody rosters three
@@ -971,16 +977,16 @@
       if (held(p.pos) >= limit(p.pos)) continue;
       if (!kdefAllowed && (p.pos === 'K' || p.pos === 'DEF')) continue;
 
-      // Plain surplus. No RB/WR multiplier here — the deepened baseline (S4 gives
-      // those positions one extra slot, because the flex is filled from them)
-      // already expresses "backs and receivers go earlier than their lineup count
-      // suggests". Applying the multiplier on top double-counted the same idea: a
-      // back scored 248 against a tight end's 71, and the model took all 39 of the
-      // first three rounds' picks at RB and WR.
-      //
-      // BENCH_RB_WR_MULTIPLIER still governs OUR valuation (V6), where there is a
-      // real starter/bench distinction for it to act on.
-      const score = p.proj - (base[p.pos] ?? p.proj);
+      // Measured against the bar for the slot this pick would fill, and weighted
+      // by whether it fills a starting slot at all. No positional multipliers of
+      // any kind: the difference between positions lives entirely in how deep
+      // their two bars sit.
+      const startingHere = held(p.pos) < (CFG.STARTERS[p.pos] || 0);
+      const bar = startingHere
+        ? (base[p.pos] ?? p.proj)
+        : (reserveBase[p.pos] ?? base[p.pos] ?? p.proj);
+      const weight = startingHere ? CFG.WEIGHT_STARTER : CFG.WEIGHT_RESERVE;
+      const score = (p.proj - bar) * weight;
 
       // Ties go to running back.
       if (score > bestScore || (score === bestScore && p.pos === 'RB' && best && best.pos !== 'RB')) {
@@ -1015,6 +1021,7 @@
      * until it has returned. A projection can therefore never read itself.
      */
     const base = state.baseline;
+    const reserveBase = state.reserveBaseline || {};
     const mine = new Set(roster().map((r) => key(r.name, r.pos)));
 
     // Everyone still on the board, best first.
@@ -1039,7 +1046,7 @@
       if (slot === CFG.SLOT) continue;                 // our own picks are not simulated
       const who = (state.slotNames || {})[slot] || `slot${slot}`;
       const rost = projectedRosters[who] || (projectedRosters[who] = []);
-      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)), p, base);
+      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)), p, base, reserveBase);
       if (!choice) continue;
       gone.add(choice.id);
       rost.push(choice);

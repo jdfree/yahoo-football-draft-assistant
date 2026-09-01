@@ -660,6 +660,7 @@
     ours: new Set(),        // "NAME|POS" of entries WE added, persisted per room
     human: new Set(),       // entries seen ARRIVING without us; never reordered
     queueSynced: false,     // has the queue been read once? see syncQueue
+    lastReconciledRound: null,  // reorder once per round of floors, not per pick
     baseline: null,         // worst-starter projection per position; computed once
     teamRosters: {},        // drafter name -> [players], accumulated from the feed
     slotNames: {},          // draft slot -> drafter name, learned from round one
@@ -1533,8 +1534,12 @@
 
     // Resolve each entry against the pool so we recover id, projection and value.
     state.queue = live.map((p) => {
-      const hit = [...state.pool.values()]
-        .find((x) => x.name === p.name && x.pos === p.pos);
+      // Resolve by Yahoo id. Names are abbreviated to an initial and they COLLIDE:
+      // two different running backs both read "B. Robinson", so matching on
+      // name+position attached one man's projection to the other. A queue entry
+      // showed -113.5 — the lesser Robinson's figure against the better one.
+      const hit = (p.id && state.pool.get(p.id))
+        || [...state.pool.values()].find((x) => x.name === p.name && x.pos === p.pos);
       return Object.assign({}, p, hit || {});
     });
 
@@ -2189,7 +2194,17 @@
       // by anyone changes what is available, so the plan is reconciled each cycle.
       // The rebuild is a diff: whatever still earns its place stays put.
       if (weDrafted) state.lastRoster = rc;
-      await reconcileQueue();
+
+      // Reorder ONLY when a new round of floors lands, or when our own pick has
+      // changed what we need. Reconciling on every tick re-plans against a board
+      // that shifts with each pick, which is thrashy and rarely changes the
+      // answer — the floors are what actually move the ranking, and they are
+      // recomputed once per draft round.
+      const projRound = state.proj ? state.proj.round : null;
+      if (weDrafted || projRound !== state.lastReconciledRound) {
+        state.lastReconciledRound = projRound;
+        await reconcileQueue();
+      }
 
       // Flag the overlay while we click around the queue UI, so the human knows to
       // keep hands off rather than fighting us for the mouse.
@@ -2391,7 +2406,8 @@
     for (const el of [...document.querySelectorAll('.ys-player')].filter((e) => /ADP:/.test(e.innerText))) {
       const p = parsePlayer(el);
       if (!p) continue;
-      const v = valued.find((x) => x.name === p.name && x.pos === p.pos);
+      const v = (p.id && valued.find((x) => x.id === p.id))
+        || valued.find((x) => x.name === p.name && x.pos === p.pos);
       let tag = el.querySelector(':scope > .ys-assist');
       if (!tag) {
         tag = document.createElement('span');

@@ -1597,7 +1597,19 @@
     for (const p of queued) posCount[p.pos] = (posCount[p.pos] || 0) + 1;
 
     while (chosen.length < n) {
-      const ranked = rankAvailable(chosen)
+      // rankAvailable([]) — NOT rankAvailable(chosen).
+      //
+      // rankAvailable derives roles from roster().concat(extra), so passing the
+      // players chosen so far makes the plan fill its own notional lineup: after a
+      // couple of backs and receivers are picked, every FURTHER back and receiver
+      // is judged bench and multiplied by 0.2, while the still-empty kicker and
+      // defense slots keep full starter weight. That is what put a kicker worth
+      // +2.1 and a defense worth +6.1 into a round-3 queue ahead of a back worth
+      // +42.9. Roles must reflect the roster we actually have.
+      //
+      // Dedup is handled by the id filter below and stacking by posCount, so
+      // nothing is lost by not seeding.
+      const ranked = rankAvailable([])
         .filter((p) => !chosen.some((c) => c.id === p.id))
         .filter((p) => !p.gated)                       // late-round gate applies here
         .filter((p) => (posCount[p.pos] || 0) < positionLimit(p.pos, b2b));

@@ -1572,8 +1572,8 @@
   async function readDraftedForBaseline() {
     const btn = draftedToggle();
     const sel = posFilter();
-    if (!btn || !sel) { say('baseline: no Drafted toggle — baseline covers undrafted players only'); return; }
-    if (myTurn()) { say('baseline: your turn — deferring drafted-player read'); return; }
+    if (!btn || !sel) { say('baseline: no Drafted toggle — baseline covers undrafted players only'); return true; }
+    if (myTurn()) { say('baseline: your turn — deferring drafted-player read'); return false; }
 
     const prevPos = sel.value;
     const was = firstRowName();
@@ -1598,6 +1598,7 @@
     await waitForTable({ minRows: 1 });
     const fresh = state.draftedPool.filter((x) => !state.pool.has(x.id)).length;
     say(`baseline: read ${state.draftedPool.length} from the Drafted view, ${fresh} not already in the pool`);
+    return true;
   }
 
   async function readPool() {
@@ -1739,11 +1740,24 @@
         if (!state.pool.size) { say('pool came back empty — not arming, will retry'); return; }
         loadOurs();
         syncLeagueShape();               // slot from the URL, before anything uses it
-        await readDraftedForBaseline();  // so the baseline sees the whole league
-        computeBaseline();               // once, from the full pool
+        // If the drafted read had to be deferred — it clicks around the player
+        // table, so it never runs during your turn — the baseline must be deferred
+        // with it. Computing now would freeze a value derived from a pool missing
+        // every drafted player, which is the exact error the read exists to fix.
+        state.baselinePending = !(await readDraftedForBaseline());
+        computeBaseline();               // provisional if pending, refined below
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;
         state.armed = true;
+      }
+
+      // Retry a deferred drafted read as soon as the turn is over, then recompute.
+      if (state.baselinePending && !myTurn()) {
+        if (await readDraftedForBaseline()) {
+          state.baselinePending = false;
+          state.baselinePool = null;         // discard the provisional snapshot
+          computeBaseline();
+        }
       }
 
       foldPicks();                           // cheap header read, every tick

@@ -48,8 +48,13 @@
     // instead of plugging an empty starting slot with someone mediocre.
     //
     // A reserve is worth a fifth of a starter — EXCEPT at running back and
-    // receiver, where a reserve counts three times as much as a reserve elsewhere
-    // (an effective 0.6). Bench depth genuinely matters at those positions: you
+    // receiver, where a reserve counts twice as much as a reserve elsewhere (an
+    // effective 0.4). Lowered from three, to prefer backs less.
+    //
+    // NOTE: this knob is OURS only. The opponent simulation uses
+    // BENCH_RB_WR_BOOST, a projection boost applied equally to RB and WR, so
+    // changing this does not alter how many backs the model predicts will be
+    // drafted, and therefore does not move the floors. Bench depth genuinely matters at those positions: you
     // start two of each plus a flex and they miss time most often, whereas a backup
     // quarterback behind an established starter is worth almost nothing however
     // large his nominal surplus.
@@ -60,7 +65,7 @@
     WEIGHT_STARTER: 1.0,
     WEIGHT_FLEX: 0.9,
     WEIGHT_RESERVE: 0.2,
-    BENCH_RB_WR_MULTIPLIER: 3,
+    BENCH_RB_WR_MULTIPLIER: 2,
 
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff

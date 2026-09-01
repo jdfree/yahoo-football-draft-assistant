@@ -96,17 +96,14 @@
 
     // Rewrite the queue so its ORDER matches the ranking, not just its membership.
     //
-    // OFF, because it cannot be reconciled with making the fewest changes. Yahoo
-    // has no reorder primitive, so lifting one entry means removing and re-adding
-    // everything above it: enforcing order turned a rebuild that should have
-    // touched one or two rows into "added 1, removed 8, kept 0". Most of what is
-    // already queued is still exactly what we want.
+    // ON. Yahoo's queue rows carry dnd-kit drag handles with a documented keyboard
+    // protocol, so the queue is reordered by DRAGGING and no player is removed to
+    // move him. That is what makes order compatible with a minimal delta; the
+    // earlier remove-and-re-add approach turned a rebuild into "added 1, removed
+    // 8, kept 0" and had to be switched off.
     //
-    // With it off, a rebuild is a pure delta — add what is missing, drop only what
-    // no longer belongs — and the queue keeps its insertion order. The cost is
-    // that if your clock expires, Yahoo autodrafts the top of the queue rather
-    // than the best player in it.
-    ENFORCE_QUEUE_ORDER: false,
+    // It matters because Yahoo drafts the TOP of the queue when your clock expires.
+    ENFORCE_QUEUE_ORDER: true,
 
     // How many rounds ahead the projection looks. Deciding in round 10 is measured
     // against the board expected at our round-12 pick. Two is the point at which a
@@ -2003,6 +2000,66 @@
    *
    * Entries the human added are never touched and never counted as out of place.
    */
+  /**
+   * Reorder the queue by DRAGGING, so nothing has to be removed to move it.
+   *
+   * Each queue row carries a dnd-kit sortable handle, and the page documents its
+   * own keyboard protocol: space to lift, arrows to move, space to drop. Driving
+   * that is far more reliable than synthesising a mouse drag, and it means order
+   * and minimal-delta are no longer in conflict — before this, lifting one entry
+   * meant removing and re-adding everything above it, which turned a rebuild into
+   * "added 1, removed 8, kept 0".
+   */
+  const queueRows = () => [...document.querySelectorAll('.ys-player')]
+    .filter((e) => /ADP:/.test(e.innerText));
+  const dragHandle = (row) => {
+    const li = row.closest('li');
+    return li ? [...li.querySelectorAll('span')]
+      .find((sp) => getComputedStyle(sp).cursor === 'grab') : null;
+  };
+  function pressKey(el, key, code) {
+    for (const type of ['keydown', 'keyup']) {
+      el.dispatchEvent(new KeyboardEvent(type, { key, code, bubbles: true, cancelable: true }));
+    }
+  }
+  async function moveQueueEntry(from, to) {
+    if (from === to) return false;
+    const handle = dragHandle(queueRows()[from]);
+    if (!handle) return false;
+    handle.focus();
+    pressKey(handle, ' ', 'Space');                       // lift
+    await sleep(200);
+    const key = to > from ? 'ArrowDown' : 'ArrowUp';
+    for (let i = 0; i < Math.abs(to - from); i++) {
+      pressKey(document.activeElement || handle, key, key);
+      await sleep(120);
+    }
+    pressKey(document.activeElement || handle, ' ', 'Space');   // drop
+    await sleep(400);
+    return true;
+  }
+
+  /**
+   * Drag the queue into the plan's order. Selection sort: for each slot, find the
+   * player who belongs there and drag him up. At most one move per slot, and no
+   * player is ever removed — an entry that belongs in the queue stays in it.
+   */
+  async function reorderQueue(plan) {
+    const planKeys = plan.map((p) => key(p.name, p.pos));
+    let moves = 0;
+    for (let i = 0; i < planKeys.length; i++) {
+      if (myTurn()) { say('your turn started — stopping reorder'); break; }
+      const live = queueRows().map((r) => { const pl = parsePlayer(r); return pl ? key(pl.name, pl.pos) : null; });
+      if (i >= live.length) break;
+      if (live[i] === planKeys[i]) continue;
+      const at = live.indexOf(planKeys[i], i);
+      if (at < 0) continue;                       // not in the queue; refill handles it
+      if (await moveQueueEntry(at, i)) moves++;
+    }
+    if (moves) say(`reordered: ${moves} moved by drag, none removed`);
+    return moves;
+  }
+
   async function reconcileQueue(allowReorder) {
     const plan = planQueue(CFG.QUEUE_SIZE, []);
     if (!plan.length) return 0;
@@ -2082,6 +2139,8 @@
     if (added || removed) {
       say(`reconciled: added ${added}, removed ${removed}, kept ${good}`);
     }
+    // Order is now a drag, not a rebuild, so it costs nothing to keep it right.
+    if (allowReorder && CFG.ENFORCE_QUEUE_ORDER && !myTurn()) await reorderQueue(plan);
     await clearFilters();
     return added + removed;
   }

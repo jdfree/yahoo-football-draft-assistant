@@ -360,6 +360,7 @@
         || [...state.pool.values()].find((x) => x.name === player.name && x.pos === player.pos);
       (state.teamRosters[drafter] = state.teamRosters[drafter] || [])
         .push(Object.assign({}, player, full ? { proj: full.proj } : {}));
+      state.pickDrafter[overall] = drafter;       // raw, independent of league size
       state.slotNames[slotOfPick(overall)] = drafter;
       state.taken.add(key(player.name, player.pos));
     }
@@ -610,6 +611,7 @@
     teamRosters: {},        // drafter name -> [players], accumulated from the feed
     slotNames: {},          // draft slot -> drafter name, learned from round one
     seenPickNos: new Set(), // overall pick numbers already recorded
+    pickDrafter: {},        // overall pick -> drafter, kept raw so slots can be rebuilt
   };
 
   const key = (name, pos) => `${name.replace(/\s+/g, ' ').trim().toUpperCase()}|${pos}`;
@@ -844,7 +846,19 @@
     const slot = detectSlot();
     const teams = detectTeams();
     if (slot !== CFG.SLOT) { say(`slot detected as ${slot} (config said ${CFG.SLOT})`); CFG.SLOT = slot; }
-    if (teams !== CFG.TEAMS) { say(`league size detected as ${teams} (config said ${CFG.TEAMS})`); CFG.TEAMS = teams; }
+    if (teams !== CFG.TEAMS) {
+      say(`league size detected as ${teams} (config said ${CFG.TEAMS})`);
+      CFG.TEAMS = teams;
+      // Slot numbers are derived from league size, so every mapping recorded
+      // under the old count is wrong. Rebuild them from the raw pick log rather
+      // than leaving stale pairings behind.
+      state.slotNames = {};
+      for (const [overall, who] of Object.entries(state.pickDrafter || {})) {
+        state.slotNames[slotOfPick(+overall)] = who;
+      }
+      state.baseline = null;      // baseline depends on team count too
+      computeBaseline();
+    }
   }
 
   const gapTo = (rd) => (rd % 2 === 1 ? 2 * (CFG.TEAMS - CFG.SLOT) + 1 : 2 * CFG.SLOT - 1);

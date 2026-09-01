@@ -922,7 +922,7 @@
     for (const p of pool) {
       if (gone.has(p.id)) continue;
       if (expected[p.pos] === undefined) expected[p.pos] = [];
-      if (expected[p.pos].length < 3) expected[p.pos].push(p);   // keep a few, to exclude self
+      if (expected[p.pos].length < 12) expected[p.pos].push(p);  // a ladder, deep enough for a full queue
     }
     return { target, gone, expected };
   }
@@ -1108,6 +1108,14 @@
    * measured against himself — the bug that made the top receiver at a position
    * score zero surplus and concluded that passing on him would leave him there.
    */
+  /**
+   * How many players at this position we have already committed to ahead of this
+   * candidate — those chosen earlier in this planning pass. The Nth running back
+   * we queue is not competing with the best running back expected to survive; the
+   * best one is already spoken for by the first pick. He competes with the Nth.
+   */
+  const ladderDepth = (pos, extra) => (extra || []).filter((x) => x.pos === pos).length;
+
   async function ensureProjection(currentPick) {
     const rd = roundNow();
     if (state.proj && state.proj.round === rd && state.proj.teams === CFG.TEAMS) return state.proj;
@@ -1116,7 +1124,7 @@
     if (!sim) return null;
     const byPos = {};
     for (const [pos, list] of Object.entries(sim.expected)) {
-      byPos[pos] = list.slice(0, 2).map((p) => ({ id: p.id, proj: p.proj }));
+      byPos[pos] = list.slice(0, 12).map((p) => ({ id: p.id, proj: p.proj }));
     }
     state.proj = { round: rd, teams: CFG.TEAMS, target: sim.target, byPos };
     const shown = Object.entries(byPos)
@@ -1304,7 +1312,7 @@
      * `exceptId` matters: a player is never his own fallback. Reusing one
      * replacement per position made the best available player score zero surplus.
      */
-    const replacement = (pos, exceptId) => {
+    const replacement = (pos, exceptId, depth = 0) => {
       const l = byPos[pos].filter((p) => p.id !== exceptId);   // sorted by projection
       if (!l.length) return 0;
       // Kickers and defenses are measured against the END of the draft, not the
@@ -1315,7 +1323,10 @@
       // made K and DEF look far worse than they are.
       // Preferred: what the simulation says is still there at our subsequent pick.
       if (projected && projected.byPos[pos]) {
-        const survivor = projected.byPos[pos].find((p) => p.id !== exceptId);
+        // Step down the ladder by what this pass has already claimed, and skip the
+        // candidate himself so nobody is ever his own replacement.
+        const rung = projected.byPos[pos].filter((p) => p.id !== exceptId);
+        const survivor = rung[Math.min(depth, rung.length - 1)];
         if (survivor) return survivor.proj;
       }
       // Fallback while the simulation has no opinion (no baseline yet, or a
@@ -1354,7 +1365,7 @@
      * 162.4 proj) outranked D. Montgomery (RB, 185.2 proj) for the same flex slot.
      */
     const flexReplacement = (exceptId) =>
-      Math.max(...FLEX_POS.map((pos) => replacement(pos, exceptId)));
+      Math.max(...FLEX_POS.map((pos) => replacement(pos, exceptId, ladderDepth(pos, extra))));
 
     return avail.filter(legal).map((p) => {
       let weight = CFG.WEIGHT_STARTER, role = 'starter';
@@ -1367,7 +1378,9 @@
       }
 
       // Role decides which bar applies, so it must be settled first.
-      const bar = role === 'flex' ? flexReplacement(p.id) : replacement(p.pos, p.id);
+      const bar = role === 'flex'
+        ? flexReplacement(p.id)
+        : replacement(p.pos, p.id, ladderDepth(p.pos, extra));
 
       // DISPLAYED value: the pure surplus, carrying no modifiers whatsoever.
       // Everything that shapes preference is applied below, to the sort key only,

@@ -168,8 +168,19 @@ would compound into the next run and drift further from the draft with every pas
 
 - Every currently undrafted player is a candidate for our queue. The simulation
   never removes anyone from consideration.
-- A candidate's surplus is `projection − the best projection expected to still be
+- A candidate's surplus is `projection − the projection expected to still be
   available at his position at our subsequent pick`, taken from the simulation.
+
+- **Against the right rung, not always the best.** The simulation keeps a ladder of
+  survivors per position, and the Nth player queued at a position is measured
+  against the Nth rung. The best surviving running back is already spoken for by
+  the first back we queue; the second is competing with the second.
+
+  Measuring everyone against the top rung made negative surplus unavoidable: only
+  one player per position can beat the best expected survivor, so an eight-deep
+  queue across six positions was guaranteed to show negatives. Live, a second and
+  third receiver read −5.4 and −10.7 where the honest figures were +0.7 and +0.6,
+  and a second running back read −22.5 instead of +2.3.
 
 So the simulation answers "what will I be able to get instead, if I pass", and the
 candidate is worth the difference.

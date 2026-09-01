@@ -52,6 +52,7 @@ in one live draft purely because thirty-five players had been drafted in between
 | **O12** | Tie-break | Ties go to running back. | — |
 | **O13** | Roster caps | A team will not exceed `CAPS[pos]` at any position. | `CAPS` |
 | **O16** | K/DEF timing | Opponents consider a kicker or defense only in the last `SIM_KDEF_LAST_ROUNDS` rounds — anchored to the final two picks of a roster. Behavioural, and deliberately overriding the arithmetic. | `SIM_KDEF_LAST_ROUNDS: 2` |
+| **O17** | Per-team jitter | Each simulated team draws a fixed positional offset for the run, scaled to the gap between that position's starter and reserve bars — so the jitter means the same at QB, where the gap is 71 points, as at DEF, where it is 14. Without it every team evaluates identically, so a position that tips becomes best for all of them at once and the model forecasts synchronised runs: 14 quarterbacks across a 42-pick window against 2 actually drafted, and earlier 17 tight ends and 24 running backs. Fixed for the run rather than per pick, because a manager who reaches for tight ends does so consistently. `0` restores deterministic behaviour. | `SIM_JITTER: 0.15` |
 | **O15** | Roster limits | How many of a position one team will ever carry: QB 2, **TE 1**, K 1, DEF 1. RB and WR are left to `CAPS`. TE is one because drafters eschew a second tight end rather than roster a replacement-level one — the arithmetic disagrees, since a 120-point tight end against a reserve bar of 84.56 scores +35, and the model duly predicted 17 tight ends in 30 picks. A roster already over a limit through real picks simply takes nothing more there. | `SIM_ROSTER_LIMITS` |
 | **O14** | Output | Per position, a ladder of up to **12** surviving players in projection order. The head of each ladder is that position's **floor**. Every horizon computed is retained, keyed by target pick. | — |
 
@@ -181,6 +182,7 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `BENCH_RB_WR_MULTIPLIER` | 2 | V6 (ours only) |
 | `SIM_ROSTER_LIMITS` | QB2 TE1 K1 DEF1 | O15 |
 | `SIM_KDEF_LAST_ROUNDS` | 2 | O16 |
+| `SIM_JITTER` | 0.15 | O17 |
 | `PROJECT_AT_PICKS_AWAY` | 3 | O1 |
 | `SAME_TEAM_PENALTY` | 0 | V7 |
 | `BYE_FACTOR` | 0.5 | V8 |
@@ -224,6 +226,16 @@ Two horizons from one draft, for reference — too few to conclude anything:
 | --- | --- | ---: | ---: | ---: | ---: |
 | pick 62 | 2 late | +23.8 | 0.0 | −8.0 | +17.9 |
 | pick 79 | 12 late | +6.2 | −19.8 | −8.1 | +6.7 |
+
+## Testing caveat
+
+Mock drafts run under **standard scoring** with Yahoo autodrafters that largely
+follow ADP. Their behaviour is therefore not ground truth: matching it would train
+the model toward ADP and away from the projected-points reasoning that matters
+under custom scoring with human drafters. Where the model and the mock disagree —
+QB being the clearest case — the model may well be right. Mixes are worth reading
+for *synchronisation* artefacts, which are real defects, rather than for
+positional agreement with ADP.
 
 ## F. Open questions
 

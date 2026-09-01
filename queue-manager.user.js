@@ -87,6 +87,14 @@
     // little wider than two.
     SIM_KDEF_LAST_ROUNDS: 2,
 
+    // How much simulated managers differ from one another, as a fraction of the
+    // gap between a position's starter and reserve bars. Every team otherwise
+    // evaluates identically, so a position that tips becomes best for all of them
+    // at once and the model forecasts synchronised runs — 14 quarterbacks in a
+    // 42-pick window against 2 actually drafted. Each team draws a fixed offset
+    // per position for the run. 0 restores the old deterministic behaviour.
+    SIM_JITTER: 0.15,
+
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff
     // schedule in the league. At 0.10, two otherwise identical players differ by
@@ -969,7 +977,7 @@
    * drafter: fill starting slots first by surplus over a replacement starter, then
    * draft for depth with RB/WR weighted up.
    */
-  function projectedChoice(roster, pool, pickNo, base, reserveBase) {
+  function projectedChoice(roster, pool, pickNo, base, reserveBase, bias) {
     const held = (pos) => roster.filter((r) => r.pos === pos).length;
 
     // One bar for every flex-eligible backup: the highest of the three reserve
@@ -1023,7 +1031,7 @@
             ? flexReserveBar
             : (reserveBase[p.pos] ?? base[p.pos] ?? p.proj));
       const weight = startingHere ? CFG.WEIGHT_STARTER : CFG.WEIGHT_RESERVE;
-      const score = (p.proj - bar) * weight;
+      const score = (p.proj - bar) * weight + (bias ? bias(p.pos) : 0);
 
       // Ties go to running back.
       if (score > bestScore || (score === bestScore && p.pos === 'RB' && best && best.pos !== 'RB')) {
@@ -1059,6 +1067,37 @@
      */
     const base = state.baseline;
     const reserveBase = state.reserveBaseline || {};
+
+    /**
+     * Per-team positional bias — the model's only source of heterogeneity.
+     *
+     * Every simulated team evaluates identically, so when a position becomes the
+     * best-scoring open slot it becomes so for ALL of them at once. That produces
+     * synchronised runs: 14 quarterbacks forecast across a 42-pick window (every
+     * team taking one in the same stretch, against 2 actually drafted), and
+     * earlier 17 tight ends and 24 running backs. Real managers differ, and the
+     * runs they create are staggered.
+     *
+     * Each team gets a fixed offset per position for the whole run, scaled to the
+     * gap between that position's starter and reserve bars — the natural measure
+     * of what a position is worth — so the jitter means the same thing at QB,
+     * where the gap is 71 points, as at DEF, where it is 14.
+     *
+     * Fixed for the run, not per pick: a manager who reaches for tight ends does
+     * so consistently. It also keeps a single projection self-consistent.
+     */
+    const bias = {};
+    const teamBias = (who, pos) => {
+      let t = bias[who];
+      if (!t) {
+        t = bias[who] = {};
+        for (const q of Object.keys(CFG.STARTERS)) {
+          const spread = Math.abs((base[q] ?? 0) - (reserveBase[q] ?? base[q] ?? 0));
+          t[q] = CFG.SIM_JITTER * spread * (Math.random() * 2 - 1);
+        }
+      }
+      return t[pos] || 0;
+    };
     const mine = new Set(roster().map((r) => key(r.name, r.pos)));
 
     // Everyone still on the board, best first.
@@ -1083,7 +1122,8 @@
       if (slot === CFG.SLOT) continue;                 // our own picks are not simulated
       const who = (state.slotNames || {})[slot] || `slot${slot}`;
       const rost = projectedRosters[who] || (projectedRosters[who] = []);
-      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)), p, base, reserveBase);
+      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)), p, base,
+                                     reserveBase, (pos) => teamBias(who, pos));
       if (!choice) continue;
       gone.add(choice.id);
       rost.push(choice);

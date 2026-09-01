@@ -102,6 +102,13 @@
     // autodrafting the top of the queue when your clock expires.
     ENFORCE_QUEUE_ORDER: false,
 
+    // How many rounds ahead the projection looks. Deciding in round 10 is measured
+    // against the board expected at our round-12 pick. Two is the point at which a
+    // position can realistically be stripped: comparing against our very next pick
+    // understates the cost of passing, because we rarely come back to a position
+    // one pick later.
+    HORIZON_ROUNDS: 2,
+
     // --- replacement horizon -------------------------------------------------
     // How many rounds to assume a position goes undrafted if you pass on it now.
     // Comparing against "what could I get one pick later" understates the cost of
@@ -824,19 +831,27 @@
    * consecutive, in which case it is the one after that pair. This is the horizon
    * over which a position can realistically be stripped.
    *
-   * It counts from the pick AFTER the one being decided. Counting from the current
-   * pick made ourNextPickAfter return that very pick — the decision in hand — and
-   * the horizon collapsed by a full round: deciding at pick 9 looked only to pick
-   * 20, our round-2 pick, instead of 37 in round 3. Every candidate was then priced
-   * against a one-round horizon, which badly understates how far a position gets
-   * stripped, and running backs suffer most. Live consequence: a QB topped the
-   * round-1 queue because passing on him cost 28 points against round 2, while the
-   * running backs' true cost against round 3 went unmeasured.
+   * It is anchored to the pick we are ABOUT TO MAKE, not to whatever pick the room
+   * happens to be on. Deciding anywhere in round 10 looks to our round-12 pick;
+   * deciding in round 1 looks to round 3.
+   *
+   * Anchoring to the room's current pick made the answer depend on WHEN in the
+   * round it was computed. While another team was picking in round 10,
+   * ourNextPickAfter returned our own round-10 pick as "next" and the horizon came
+   * out a round short at round 11; recomputed after our pick it gave round 12. The
+   * shorter horizon understates how far a position gets stripped, and running backs
+   * suffer most — a QB once topped the round-1 queue on a 28-point edge measured
+   * against round 2, while the backs' real cost against round 3 went unmeasured.
    */
+  /** Our pick in a given round, in a snake. */
+  function ourPickInRound(round) {
+    const T = CFG.TEAMS;
+    return (round % 2 === 1) ? (round - 1) * T + CFG.SLOT : round * T - CFG.SLOT + 1;
+  }
   function subsequentPick(currentPick) {
-    const first = ourNextPickAfter(currentPick + 1);
-    const second = ourNextPickAfter(first + 1);
-    return (second === first + 1) ? ourNextPickAfter(second + 1) : second;
+    const imminent = ourNextPickAfter(currentPick);      // the pick in hand
+    const round = Math.ceil(imminent / CFG.TEAMS);
+    return ourPickInRound(round + CFG.HORIZON_ROUNDS);
   }
 
   /** Starting slots a roster still has open, as positions a pick could fill. */
@@ -1108,14 +1123,6 @@
    * measured against himself — the bug that made the top receiver at a position
    * score zero surplus and concluded that passing on him would leave him there.
    */
-  /**
-   * How many players at this position we have already committed to ahead of this
-   * candidate — those chosen earlier in this planning pass. The Nth running back
-   * we queue is not competing with the best running back expected to survive; the
-   * best one is already spoken for by the first pick. He competes with the Nth.
-   */
-  const ladderDepth = (pos, extra) => (extra || []).filter((x) => x.pos === pos).length;
-
   async function ensureProjection(currentPick) {
     const rd = roundNow();
     if (state.proj && state.proj.round === rd && state.proj.teams === CFG.TEAMS) return state.proj;
@@ -1312,7 +1319,7 @@
      * `exceptId` matters: a player is never his own fallback. Reusing one
      * replacement per position made the best available player score zero surplus.
      */
-    const replacement = (pos, exceptId, depth = 0) => {
+    const replacement = (pos, exceptId) => {
       const l = byPos[pos].filter((p) => p.id !== exceptId);   // sorted by projection
       if (!l.length) return 0;
       // Kickers and defenses are measured against the END of the draft, not the
@@ -1323,10 +1330,17 @@
       // made K and DEF look far worse than they are.
       // Preferred: what the simulation says is still there at our subsequent pick.
       if (projected && projected.byPos[pos]) {
-        // Step down the ladder by what this pass has already claimed, and skip the
-        // candidate himself so nobody is ever his own replacement.
-        const rung = projected.byPos[pos].filter((p) => p.id !== exceptId);
-        const survivor = rung[Math.min(depth, rung.length - 1)];
+        // The BEST survivor, for every candidate — not a ladder indexed by how many
+        // of this position we have already queued.
+        //
+        // We make ONE pick now. Passing on this position leaves us the best player
+        // still there at the horizon, whoever we would otherwise have queued, so
+        // that single figure is the true cost of forgoing the position this round.
+        // A negative surplus is the point, not a defect: it says this player will
+        // still be around later and the pick is better spent elsewhere. Indexing a
+        // ladder made those numbers positive by measuring against a bar nobody
+        // actually faces, which hid exactly that signal.
+        const survivor = projected.byPos[pos].find((p) => p.id !== exceptId);
         if (survivor) return survivor.proj;
       }
       // Fallback while the simulation has no opinion (no baseline yet, or a
@@ -1365,7 +1379,7 @@
      * 162.4 proj) outranked D. Montgomery (RB, 185.2 proj) for the same flex slot.
      */
     const flexReplacement = (exceptId) =>
-      Math.max(...FLEX_POS.map((pos) => replacement(pos, exceptId, ladderDepth(pos, extra))));
+      Math.max(...FLEX_POS.map((pos) => replacement(pos, exceptId)));
 
     return avail.filter(legal).map((p) => {
       let weight = CFG.WEIGHT_STARTER, role = 'starter';
@@ -1378,9 +1392,7 @@
       }
 
       // Role decides which bar applies, so it must be settled first.
-      const bar = role === 'flex'
-        ? flexReplacement(p.id)
-        : replacement(p.pos, p.id, ladderDepth(p.pos, extra));
+      const bar = role === 'flex' ? flexReplacement(p.id) : replacement(p.pos, p.id);
 
       // DISPLAYED value: the pure surplus, carrying no modifiers whatsoever.
       // Everything that shapes preference is applied below, to the sort key only,

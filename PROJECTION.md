@@ -171,16 +171,18 @@ would compound into the next run and drift further from the draft with every pas
 - A candidate's surplus is `projection − the projection expected to still be
   available at his position at our subsequent pick`, taken from the simulation.
 
-- **Against the right rung, not always the best.** The simulation keeps a ladder of
-  survivors per position, and the Nth player queued at a position is measured
-  against the Nth rung. The best surviving running back is already spoken for by
-  the first back we queue; the second is competing with the second.
+- **Against the best survivor, for every candidate.** We make one pick now, so
+  passing on a position leaves us the best player still there at the horizon —
+  whoever we would otherwise have queued. That single figure is the true cost of
+  forgoing the position this round, and it is what makes the number react to runs:
+  when the simulation predicts a run on running backs, the floor drops and every
+  back's surplus rises together.
 
-  Measuring everyone against the top rung made negative surplus unavoidable: only
-  one player per position can beat the best expected survivor, so an eight-deep
-  queue across six positions was guaranteed to show negatives. Live, a second and
-  third receiver read −5.4 and −10.7 where the honest figures were +0.7 and +0.6,
-  and a second running back read −22.5 instead of +2.3.
+  **Negative surplus is a signal, not a defect.** It says this player is likely to
+  still be available at the horizon, so the pick is better spent elsewhere. An
+  attempt to index a ladder of survivors — measuring the Nth queued back against
+  the Nth rung — made those numbers positive, but against a bar nobody actually
+  faces, and it hid exactly the signal the number exists to give.
 
 So the simulation answers "what will I be able to get instead, if I pass", and the
 candidate is worth the difference.

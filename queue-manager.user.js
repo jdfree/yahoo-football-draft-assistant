@@ -884,14 +884,19 @@
    * slot mapping, mis-attributes every pick to the wrong team, and poisons the whole
    * projection — with nothing in the output that looks obviously wrong.
    *
-   * Both come from the room's own list of OUR picks, which reads
-   * "Round 1, Pick 7 (7th Overall) / Round 2, Pick 8 (22nd Overall) / ...". It is
-   * rendered before the draft starts, so the shape is known at arm time and never
-   * has to be revised later — which matters, because the baseline is computed once
-   * and a league size corrected afterwards would invalidate it.
+   * Slot comes from the draft-room URL, which is authoritative and available
+   * immediately. Team count comes from the room's own list of OUR picks, which
+   * reads "Round 1, Pick 7 (7th Overall) / Round 2, Pick 8 (22nd Overall) / ...":
+   * for a snake, round 1 and round 2 overalls sum to 2T + 1, so
+   * T = (7 + 22 - 1) / 2 = 14.
    *
-   * Round 1's pick number is the slot. For a snake, round 1 and round 2 overalls
-   * sum to 2T + 1, so T = (o1 + o2 - 1) / 2 — here (7 + 22 - 1) / 2 = 14.
+   * That list is NOT rendered before the draft starts — verified in a live room
+   * with the countdown still running — so team count reports whether it is
+   * CONFIRMED. The baseline is computed once and can never be revised, so it waits
+   * for confirmation rather than freezing itself against a default that happens to
+   * be wrong. A 12 assumed in a 14-team room throws off every slot mapping,
+   * mis-attributes every pick, and poisons the projection, with nothing in the
+   * output that looks obviously wrong.
    */
   function detectSlot() {
     const m = location.pathname.match(/draftclient\/f1\/\d+\/(\d+)/);
@@ -906,6 +911,46 @@
     }
     return out.sort((a, b) => a.round - b.round);
   }
+  /**
+   * Narrow the league size from the header alone.
+   *
+   * Every "ROUND r, PICK n" the room displays is a constraint: pick n falls in
+   * round r exactly when (r-1)*T < n <= r*T. Intersecting those over a few picks
+   * pins T down without needing any list of teams. Round 1 pick 14 says T >= 14;
+   * round 2 pick 15 says T < 15; together, T = 14.
+   *
+   * This is used in preference to counting distinct drafters, which is wrong twice
+   * over: early in a draft the count of drafters trivially equals the count of
+   * picks, and drafter names are not unique — one live room held two "Mark", two
+   * "Marcuss" and two "Jason", which would have merged six teams into three.
+   */
+  function observeShape() {
+    const { round, overall } = draftPosition();
+    if (!(round > 0 && overall > 0)) return;
+    state.shapeSeen = state.shapeSeen || new Set();
+    const seen = `${round}:${overall}`;
+    if (state.shapeSeen.has(seen)) return;
+    state.shapeSeen.add(seen);
+    if (!state.teamCandidates) {
+      state.teamCandidates = new Set(Array.from({ length: 31 }, (_, i) => i + 2));  // 2..32
+    }
+    const before = state.teamCandidates.size;
+    for (const t of [...state.teamCandidates]) {
+      if (!(overall > (round - 1) * t && overall <= round * t)) state.teamCandidates.delete(t);
+    }
+    if (!state.teamCandidates.size) {
+      // Contradiction: something was mis-parsed. Start over rather than lock in.
+      say('league size: observations contradict each other — restarting the narrowing');
+      state.teamCandidates = null;
+      state.shapeSeen = new Set();
+      return;
+    }
+    if (before > 1 && state.teamCandidates.size === 1) {
+      say(`league size narrowed to ${[...state.teamCandidates][0]} from the round/pick header`);
+    }
+  }
+
+  /** @returns {{teams:number, confirmed:boolean}} */
   function detectTeams() {
     const sched = pickSchedule();
     const r1 = sched.find((x) => x.round === 1);
@@ -915,22 +960,33 @@
       if (Number.isInteger(t) && t >= 2 && t <= 32) {
         // Cross-check against round 3 when it is there: overall(r3) = 2T + slot.
         const r3 = sched.find((x) => x.round === 3);
-        if (!r3 || r3.overall === 2 * t + r1.pick) return t;
+        if (!r3 || r3.overall === 2 * t + r1.pick) return { teams: t, confirmed: true };
         say(`league size: schedule disagrees with itself (r3 ${r3.overall} vs ${2 * t + r1.pick})`);
       }
     }
-    // Fallback: distinct drafters in the picks feed, trusted once we have seen at
-    // least that many picks. Only reachable if the schedule list is not rendered.
-    const names = Object.keys(state.teamRosters || {});
-    const seen = state.seenPickNos ? state.seenPickNos.size : 0;
-    if (names.length > 1 && seen >= names.length) return names.length;
-    return CFG.TEAMS;
+    // Then the header constraints, once they leave exactly one possibility.
+    if (state.teamCandidates && state.teamCandidates.size === 1) {
+      return { teams: [...state.teamCandidates][0], confirmed: true };
+    }
+    // Last resort: distinct drafters, but only once the order has WRAPPED — some
+    // drafter has picked twice. In a snake that happens exactly when round 1 ends,
+    // so it is the first moment every team has appeared. Without this the count is
+    // trivially satisfied at pick 4 of a 14-team room, which froze a baseline
+    // against 4 teams.
+    const counts = {};
+    for (const who of Object.values(state.pickDrafter || {})) counts[who] = (counts[who] || 0) + 1;
+    const names = Object.keys(counts);
+    if (names.length > 1 && Object.values(counts).some((n) => n >= 2)) {
+      return { teams: names.length, confirmed: true };
+    }
+    return { teams: CFG.TEAMS, confirmed: false };
   }
   function syncLeagueShape() {
     const slot = detectSlot();
-    const teams = detectTeams();
+    const { teams, confirmed } = detectTeams();
+    state.teamsConfirmed = confirmed;
     if (slot !== CFG.SLOT) { say(`slot detected as ${slot} (config said ${CFG.SLOT})`); CFG.SLOT = slot; }
-    if (teams !== CFG.TEAMS) {
+    if (confirmed && teams !== CFG.TEAMS) {
       say(`league size detected as ${teams} (config said ${CFG.TEAMS})`);
       CFG.TEAMS = teams;
       // Slot numbers are derived from league size, so every mapping recorded
@@ -1834,20 +1890,26 @@
         // baseline is computed once so there would be no second chance. Until it
         // lands, ranking falls back to the ADP survival model.
         state.baselinePending = !(await readDraftedForBaseline());
-        if (!state.baselinePending) computeBaseline();
+        if (!state.baselinePending && !state.teamsConfirmed) {
+          say('baseline: league size not confirmed yet — waiting rather than fixing it wrong');
+        }
+        if (!state.baselinePending && state.teamsConfirmed) computeBaseline();
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;
         state.armed = true;
       }
 
-      // Retry a deferred drafted read as soon as the turn is over, then recompute.
+      // Retry a deferred drafted read as soon as the turn is over, and compute the
+      // baseline as soon as the league shape is confirmed. Both are one-shot.
       if (state.baselinePending && !myTurn()) {
-        if (await readDraftedForBaseline()) {
-          state.baselinePending = false;
-          computeBaseline();                 // the one and only computation
-        }
+        if (await readDraftedForBaseline()) state.baselinePending = false;
+      }
+      if (!state.baselinePending && !state.baselineDone) {
+        syncLeagueShape();
+        if (state.teamsConfirmed) computeBaseline();   // the one and only computation
       }
 
+      observeShape();                        // narrow league size from the header
       foldPicks();                           // cheap header read, every tick
 
       // Your clock, your pick — the tick does nothing during your turn. The

@@ -17,13 +17,30 @@ Establish what a *starting-calibre* player looks like at each position. This is 
 property of the league's shape, not of who happens to be undrafted, so it is
 computed once and frozen. Literally once: the function returns early ever after.
 
-That makes league size and slot something the assistant must know **before** it
-computes, not something it can correct later. Both come from the room's own list
-of our picks — `Round 1, Pick 7 (7th Overall) / Round 2, Pick 8 (22nd Overall)` —
-which is rendered before the draft starts. Round 1's pick number is the slot, and
-round 1 and round 2 overalls sum to `2T + 1`, so `T = (7 + 22 - 1) / 2 = 14`.
-Counting distinct drafters in the picks feed remains a fallback, but it cannot
-work before anyone has picked.
+That makes league size something the assistant must know **before** it computes,
+not something it can correct later — so it waits until the size is *confirmed*
+rather than assuming a default. Slot is easy: it is in the draft-room URL.
+
+Team count is narrowed from the header. Every `ROUND r, PICK n` the room displays
+is a constraint, since pick `n` falls in round `r` exactly when
+`(r-1)·T < n <= r·T`. Round 1 pick 14 gives `T >= 14`; round 2 pick 15 gives
+`T < 15`; together `T = 14`. This resolves at the first pick of round 2 — the
+earliest point at which the size is determined at all — and tolerates missed
+picks. Until then there is no baseline and ranking falls back to the ADP survival
+model, which costs the projection for round 1 only.
+
+Two rejected sources, both tried live:
+
+- **The room's list of our own picks** (`Round 1, Pick 7 (7th Overall) / Round 2,
+  Pick 8 (22nd Overall)`) gives `T = (7 + 22 - 1) / 2` directly, and is used when
+  present — but it is not rendered in every room, and never before the draft
+  starts.
+- **Counting distinct drafters** is wrong twice over. Early on, the number of
+  drafters trivially equals the number of picks: at pick 4 of a 14-team room it
+  "confirmed" four teams and froze the baseline against them. And drafter names
+  are not unique — one live room held two `Mark`, two `Marcuss` and two `Jason`,
+  which would have merged six teams into three. It survives only as a last resort,
+  and only once the order has visibly wrapped.
 
 Inputs: the roster slots (e.g. QB, WR, WR, RB, RB, TE, W/R/T, K, DEF) and the
 number of teams. Flex (`W/R/T`) means RB, WR or TE.

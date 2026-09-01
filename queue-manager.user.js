@@ -95,12 +95,17 @@
     LATE_ONLY: [],
 
     // Rewrite the queue so its ORDER matches the ranking, not just its membership.
-    // Off by default: Yahoo offers no way to reorder, so a single misplaced entry
-    // costs a remove-and-re-add of everything below it, and the queue visibly tore
-    // itself down and rebuilt on nearly every cycle. Membership is always kept
-    // current; only the sequence is left alone. Turn on if you rely on Yahoo
-    // autodrafting the top of the queue when your clock expires.
-    ENFORCE_QUEUE_ORDER: false,
+    //
+    // On, but it only ever runs when a new round of projected floors lands, or
+    // right after our own pick. That gate is what makes it affordable: Yahoo has
+    // no reorder primitive, so a misplaced entry costs a remove-and-re-add of
+    // everything below it, and reconciling on every tick tore the queue down and
+    // rebuilt it continuously. Once per round it is a single tidy-up.
+    //
+    // It matters because Yahoo drafts from the TOP of the queue when your clock
+    // expires. Left alone, insertion order persists: a live queue led with a
+    // defense worth +3.5 and a kicker worth +2.1 ahead of a back worth +91.8.
+    ENFORCE_QUEUE_ORDER: true,
 
     // How many rounds ahead the projection looks. Deciding in round 10 is measured
     // against the board expected at our round-12 pick. Two is the point at which a

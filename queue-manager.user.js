@@ -117,6 +117,13 @@
     // that never triggers.
     AUTOPICK_AT_SECONDS: 0,
 
+    // Seconds left on the SECOND of two back-to-back picks at which we step in and
+    // take the best queued player at a different position from the first. Yahoo
+    // drafts the top of the queue when a clock expires, and that top rarely moves
+    // in the seconds between two consecutive picks — so a turn can spend both on
+    // the same position. Fires whether or not AUTOPICK_AT_SECONDS is enabled.
+    PAIR_SPLIT_AT_SECONDS: 1,
+
     // Positions barred until the last two rounds. EMPTY BY DEFAULT: holding
     // kickers and defenses to the end is convention, not arithmetic, and the model
     // already prices them honestly — their replacement is measured against the END
@@ -500,6 +507,69 @@
    * because a single failed lookup must not cost the pick — the Draft button only
    * exists during our turn and only on a row that is actually rendered.
    */
+  /**
+   * The position we took with the FIRST pick of a back-to-back pair, or null if
+   * this is not the second pick of one.
+   *
+   * Read from the picks feed rather than the roster: the roster panel is not in
+   * draft order, so "the last player we added" is not reliably the one we just
+   * took. The pick immediately before ours being ours is exactly what makes this
+   * the second of a pair.
+   */
+  function pairFirstPosition() {
+    const here = draftPosition().overall;
+    if (slotOfPick(here - 1) !== CFG.SLOT) return null;
+    return state.pickPos[here - 1] || null;
+  }
+
+  /**
+   * Draft the top queued player who is NOT at the given position.
+   *
+   * Back-to-back picks are the one case where letting the clock expire twice is
+   * actively harmful: Yahoo takes the top of the queue both times, and the top of
+   * the queue rarely changes in the seconds between, so a turn can spend both
+   * picks on the same position. Splitting them costs nothing — the second-best
+   * option at another position is normally worth far more than a third running
+   * back — and it only ever fires with the clock nearly gone, so a human pick
+   * always takes precedence.
+   */
+  async function draftDifferentPosition(firstPos) {
+    const seen = new Set();
+    const candidates = [];
+    for (const p of state.queue) {
+      if (!p || !p.pos || p.pos === firstPos) continue;
+      const k = key(p.name, p.pos);
+      if (seen.has(k)) continue;
+      seen.add(k); candidates.push(p);
+    }
+    // If the queue offers nothing else, fall back to the board.
+    for (const p of planQueue(CFG.QUEUE_SIZE, [])) {
+      if (!p || p.pos === firstPos) continue;
+      const k = key(p.name, p.pos);
+      if (seen.has(k)) continue;
+      seen.add(k); candidates.push(p);
+    }
+    if (!candidates.length) {
+      say(`pair split: nothing queued outside ${firstPos} — leaving the clock alone`);
+      return false;
+    }
+
+    for (const pl of candidates) {
+      const row = await findPlayerRow(pl);
+      const btn = row && [...row.querySelectorAll('button')]
+        .find((b) => /^draft$/i.test((b.innerText || '').trim()));
+      if (!btn) continue;
+      btn.click();
+      say(`pair split at ${secondsLeft()}s — took ${pl.name} (${pl.pos}) ` +
+          `instead of a second ${firstPos}`);
+      setSearch('');
+      return true;
+    }
+    say(`pair split: could not draft any non-${firstPos} candidate`);
+    setSearch('');
+    return false;
+  }
+
   async function draftQueueTop() {
     const candidates = [...state.queue];
     const best = planQueue(1)[0];
@@ -2731,13 +2801,26 @@
    * cannot be starved.
    */
   let autopickTried = false;
+  let pairTried = false;
   let watchTrace = null;
   const autopickTimer = setInterval(() => {
     try {
-      if (!CFG.AUTOPICK_AT_SECONDS || complete()) return;
-      if (!myTurn()) { autopickTried = false; watchTrace = null; return; }
-      if (autopickTried) return;
+      if (complete()) return;
+      if (!myTurn()) { autopickTried = false; pairTried = false; watchTrace = null; return; }
       const left = secondsLeft();
+
+      // Back-to-back picks: on the SECOND of the pair, force a different position
+      // than the first. Fires at PAIR_SPLIT_AT_SECONDS regardless of whether the
+      // ordinary last-second pick is enabled.
+      const firstPos = pairFirstPosition();
+      if (firstPos && !pairTried && left !== null && left <= CFG.PAIR_SPLIT_AT_SECONDS) {
+        pairTried = true;
+        draftDifferentPosition(firstPos);
+        return;
+      }
+
+      if (!CFG.AUTOPICK_AT_SECONDS) return;
+      if (autopickTried) return;
       // Trace once per second while it is our turn: without this, a non-firing
       // autopick is indistinguishable from a watcher that never ran at all.
       if (watchTrace !== left) { watchTrace = left; say(`turn: ${left}s left (fire at ${CFG.AUTOPICK_AT_SECONDS})`); }

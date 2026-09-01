@@ -140,6 +140,7 @@ to a genuine starting need.
 | **Q6** | Position limits | No position may occupy more than `QUEUE_SIZE − 2` queue slots, so a run on one position cannot leave the whole queue useless. K and DEF are capped at 2, or 1 when our picks are back-to-back. | — |
 | **Q7** | Veto | Pull the same player out of the queue N times and he is never queued again. Detected in two passes: a disappearance is only *suspected*, then counted on the next pass once the picks feed has caught up and he is still undrafted — otherwise a player drafted a moment earlier is blamed on the human. | `VETO_AFTER: 3` |
 | **Q9** | Floors strip | A bar across the bottom of the window showing the horizon and the floor at each position — the numbers every valuation rests on. Reports the floors **currently in use** (the latest projection), not the nearest horizon ahead; those differ, and a strip reporting a horizon nothing uses is worse than none. | `SHOW_FLOORS: true` |
+| **Q10** | Back-to-back split | On the **second** of two consecutive picks, with `PAIR_SPLIT_AT_SECONDS` left on the clock, draft the top queued player at a **different position** from the one just taken. Yahoo drafts the queue top when a clock expires, and that top rarely moves in the seconds between two consecutive picks, so a turn can spend both on the same position. Fires whether or not `AUTOPICK_AT_SECONDS` is enabled, and only with the clock nearly gone, so your own pick always takes precedence. "Second of a pair" is read from the picks feed — the pick before ours being ours — rather than from the roster panel, which is not in draft order. | `PAIR_SPLIT_AT_SECONDS: 1` |
 | **Q8** | Turn safety | Nothing touches the queue while our clock is running. Every loop checks and stops. | — |
 
 There is deliberately **no** "this entry is the human's" concept. Three attempts
@@ -173,6 +174,7 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `ENFORCE_QUEUE_ORDER` | true | Q5 |
 | `SHOW_FLOORS` | true | Q9 |
 | `VETO_AFTER` | 3 | Q7 |
+| `PAIR_SPLIT_AT_SECONDS` | 1 | Q10 |
 | `LATE_ONLY` | *(empty)* | our own K/DEF gate, off — the math decides |
 | `AUTOPICK_AT_SECONDS` | 0 | last-second safety pick, off |
 

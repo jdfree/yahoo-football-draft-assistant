@@ -1893,7 +1893,20 @@
     // the queue tear itself down and rebuild on almost every cycle — "dropped 6
     // (0 outranked, 6 out of order)" — for players that were all perfectly good.
     // The churn is far more disruptive than the imperfect order it fixes.
-    let doomedList = ours.filter((pl) => !keep.has(key(pl.name, pl.pos)));
+    // A settled queue is left ALONE.
+    //
+    // While the queue is full and it is not our turn, the only thing that should
+    // change it is a queued player being drafted by someone else — then his slot
+    // is refilled. Re-planning against the live board on every cycle meant the
+    // queue was rewritten constantly for no gain, which is disruptive to watch and
+    // pointless: the ranking barely moves between two consecutive picks.
+    //
+    // A full re-plan happens when our own pick changes what we need, which is the
+    // one moment the queue's premise is genuinely invalid.
+    const unavailable = (pl) => state.taken.has(key(pl.name, pl.pos));
+    let doomedList = allowReorder
+      ? ours.filter((pl) => !keep.has(key(pl.name, pl.pos)))
+      : ours.filter(unavailable);
     let good = ours.length - doomedList.length;
     if (CFG.ENFORCE_QUEUE_ORDER && allowReorder) {
       good = 0;
@@ -2289,10 +2302,11 @@
       // our own pick. Yahoo has no reorder primitive, so resequencing means
       // removing and re-adding; doing that against a board that shifts with every
       // pick is pure thrash, and the floors are what actually move the ranking.
+      // Only our own pick justifies rewriting the queue. Everything else just
+      // replaces players who have actually been drafted.
       const projRound = state.proj ? state.proj.round : null;
-      const mayReorder = weDrafted || projRound !== state.lastReconciledRound;
-      if (mayReorder) state.lastReconciledRound = projRound;
-      await reconcileQueue(mayReorder);
+      if (weDrafted) state.lastReconciledRound = projRound;
+      await reconcileQueue(weDrafted);
 
       // Flag the overlay while we click around the queue UI, so the human knows to
       // keep hands off rather than fighting us for the mouse.

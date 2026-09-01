@@ -94,6 +94,14 @@
     // prevent a second kicker or defense either way.
     LATE_ONLY: [],
 
+    // Rewrite the queue so its ORDER matches the ranking, not just its membership.
+    // Off by default: Yahoo offers no way to reorder, so a single misplaced entry
+    // costs a remove-and-re-add of everything below it, and the queue visibly tore
+    // itself down and rebuilt on nearly every cycle. Membership is always kept
+    // current; only the sequence is left alone. Turn on if you rely on Yahoo
+    // autodrafting the top of the queue when your clock expires.
+    ENFORCE_QUEUE_ORDER: false,
+
     // --- replacement horizon -------------------------------------------------
     // How many rounds to assume a position goes undrafted if you pass on it now.
     // Comparing against "what could I get one pick later" understates the cost of
@@ -1786,13 +1794,23 @@
     const current = queueView().filter((pl) => pl && pl.pos && pl.pos !== '?');
     const ours = current.filter((pl) => !isHuman(pl));
 
-    // How much of the queue already reads as the plan does?
-    let good = 0;
-    while (good < ours.length && good < planKeys.length
-           && key(ours[good].name, ours[good].pos) === planKeys[good]) good++;
-
-    const wrong = ours.slice(good);
-    if (!wrong.length) return 0;                  // in order and complete: touch nothing
+    // MEMBERSHIP is reconciled; ORDER is not, unless asked for.
+    //
+    // Yahoo's queue has no reorder primitive, so putting an entry higher means
+    // removing everything above it and adding it back. Enforcing full order made
+    // the queue tear itself down and rebuild on almost every cycle — "dropped 6
+    // (0 outranked, 6 out of order)" — for players that were all perfectly good.
+    // The churn is far more disruptive than the imperfect order it fixes.
+    let doomedList = ours.filter((pl) => !keep.has(key(pl.name, pl.pos)));
+    let good = ours.length - doomedList.length;
+    if (CFG.ENFORCE_QUEUE_ORDER) {
+      good = 0;
+      while (good < ours.length && good < planKeys.length
+             && key(ours[good].name, ours[good].pos) === planKeys[good]) good++;
+      doomedList = ours.slice(good);
+    }
+    const wrong = doomedList;
+    if (!wrong.length) return 0;                  // nothing outranked: touch nothing
     const doomed = new Set(wrong.map((pl) => key(pl.name, pl.pos)));
 
     const out = await removeFromQueue((pl) => !isHuman(pl) && doomed.has(key(pl.name, pl.pos)));

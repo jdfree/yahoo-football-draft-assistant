@@ -699,8 +699,15 @@
     // from the live pool after picks have happened walks it steadily downward,
     // because the best players are gone. Observed live — RB fell from 108.4 to
     // 92.6 purely because thirty-five players had been drafted in between.
-    const candidate = [...state.pool.values()].map((p) => ({ pos: p.pos, proj: p.proj }))
-      .concat(state.draftedPool || []);
+    // Dedup by Yahoo id. The "Drafted" pill turns out to show ALL players, not just
+    // the taken ones, so the two reads overlap almost entirely — concatenating them
+    // counted every elite player twice and filled the starter slots with fourteen
+    // players standing in for twenty-eight. That inflated the RB baseline to 151
+    // against a true figure near 108, which silently understates every running back.
+    const merged = new Map();
+    for (const p of state.pool.values()) merged.set(p.id, { pos: p.pos, proj: p.proj });
+    for (const p of state.draftedPool || []) if (!merged.has(p.id)) merged.set(p.id, p);
+    const candidate = [...merged.values()];
     if (!state.baselinePool || candidate.length > state.baselinePool.length) {
       state.baselinePool = candidate;
     }
@@ -725,6 +732,18 @@
     for (const [pos, list] of Object.entries(starters)) baseline[pos] = Math.min(...list);
     state.baseline = baseline;
     say(`baseline (worst starter): ${JSON.stringify(baseline)}`);
+
+    // Self-check. A corrupt pool does not make the baseline throw, it just makes it
+    // quietly wrong — a duplicated pool once put RB at 151 instead of 108 and
+    // nothing complained. The count of players at or above the baseline must match
+    // the number of starting slots at that position, so verify it and say so.
+    for (const [pos, list] of Object.entries(starters)) {
+      const atOrAbove = state.baselinePool.filter((p) => p.pos === pos && p.proj >= baseline[pos]).length;
+      if (Math.abs(atOrAbove - list.length) > 2) {
+        say(`baseline WARNING ${pos}: ${atOrAbove} players at or above ${baseline[pos]} ` +
+            `but only ${list.length} starting slots — pool likely duplicated or mis-read`);
+      }
+    }
     return baseline;
   }
 
@@ -1569,7 +1588,7 @@
       sel.value = opt.value;
       sel.dispatchEvent(new Event('change', { bubbles: true }));
       await waitForTable({ minRows: 1, changedFrom: before });
-      for (const pl of readRows()) if (pl.proj > 0) seen.set(pl.id, { pos: pl.pos, proj: pl.proj });
+      for (const pl of readRows()) if (pl.proj > 0) seen.set(pl.id, { id: pl.id, pos: pl.pos, proj: pl.proj });
     }
 
     state.draftedPool = [...seen.values()];
@@ -1577,8 +1596,8 @@
     sel.dispatchEvent(new Event('change', { bubbles: true }));
     btn.click();                                  // back to the human's view
     await waitForTable({ minRows: 1 });
-    const byPos = state.draftedPool.reduce((a, x) => (a[x.pos] = (a[x.pos] || 0) + 1, a), {});
-    say(`baseline: +${state.draftedPool.length} already-drafted read — ${JSON.stringify(byPos)}`);
+    const fresh = state.draftedPool.filter((x) => !state.pool.has(x.id)).length;
+    say(`baseline: read ${state.draftedPool.length} from the Drafted view, ${fresh} not already in the pool`);
   }
 
   async function readPool() {

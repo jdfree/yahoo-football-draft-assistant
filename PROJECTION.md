@@ -44,13 +44,23 @@ corrected. Recomputing from the live pool walks the baseline steadily downward a
 the draft proceeds: observed live, RB fell from 108.4 to 92.6 purely because
 thirty-five players had been drafted in between.
 
-**Drafted players are read back in.** Yahoo's `Drafted` pill filters the player
-table to exactly the players already taken, carrying the same projection column.
-At arm time the assistant toggles it, sweeps the positions, and merges those
+**Drafted players are read back in.** Yahoo's `Drafted` pill widens the player
+table to include players already taken, carrying the same projection column. At
+arm time the assistant toggles it, sweeps the positions, and merges those
 projections into the baseline pool before computing. Without this, arming
 mid-draft is badly wrong in a way that is easy to miss — at pick 111 the RB
 worst-starter read 51.87 against a true figure near 108, which makes every
 remaining running back look like a franchise cornerstone.
+
+The merge is **by Yahoo id**. The pill shows all players rather than only the
+taken ones, so the two reads overlap almost entirely; concatenating them counted
+every elite player twice and filled twenty-eight starting slots with fourteen
+players, pushing RB the other way to 151.
+
+Both failures were silent — a wrong baseline throws nothing, it just misprices
+every pick — so the computation now checks itself: the number of players at or
+above the baseline must match the number of starting slots at that position, and
+a mismatch is logged.
 
 ## 2. Predicting the picks between now and our subsequent pick
 

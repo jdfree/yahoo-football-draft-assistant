@@ -661,6 +661,7 @@
     queueSynced: false,     // has the queue been read once? see syncQueue
     lastReconciledRound: null,  // reorder once per round of floors, not per pick
     floors: new Map(),      // target pick -> floors; bench reads the deepest
+    realised: [],           // {target, round, from, predicted, actual, err} per horizon reached
     lastFillTurn: null,     // our pick number the last full rebuild was run for
     lastProjApplied: null,  // the projection whose floors the queue order reflects
     removals: {},           // "NAME|POS" -> times YOU have taken him out
@@ -2370,6 +2371,12 @@
     say(`pool read complete: ${state.pool.size} — ${JSON.stringify(counts())}`);
   }
 
+  /** The self-scoring record: every horizon reached, predicted against actual. */
+  window.__floorScore = () => state.realised.map((r) => ({
+    fromRound: Math.ceil(r.scoredAt / CFG.TEAMS), targetRound: r.round, target: r.target,
+    lateBy: r.lateBy, err: r.err, predicted: r.predicted, actual: r.actual,
+  }));
+
   window.__queueDump = () => {
     const ranked = state.armed ? rankAvailable() : [];
     return {
@@ -2485,6 +2492,7 @@
         }
       }
 
+      scoreRealisedFloors();                 // grade past projections against reality
       observeShape();                        // narrow league size from the header
       foldPicks();                           // cheap header read, every tick
 
@@ -2623,6 +2631,55 @@
    * are no longer answering a live question.
    */
   let floorsEl = null;
+  /**
+   * Score each projection against what actually happened.
+   *
+   * When the draft reaches a pick some earlier projection targeted, record the
+   * best player still available at each position and compare it with what that
+   * projection predicted would be there. Measured AT the target, not whenever we
+   * next look — reading late understates every floor, because more players have
+   * gone, and that alone made a running-back error look like -19.8 when the
+   * horizon before it had been exact.
+   *
+   * The interesting question is not whether a position is over- or under-valued
+   * on average but WHERE in the draft it goes wrong, so each row keeps the round
+   * it was projected from and the round it landed in.
+   */
+  function scoreRealisedFloors() {
+    if (!state.floors || !state.floors.size) return;
+    const here = draftPosition().overall;
+    const mine = new Set(roster().map((r) => key(r.name, r.pos)));
+
+    for (const [target, byPos] of state.floors) {
+      if (here < target) continue;                       // not reached yet
+      if (state.realised.some((r) => r.target === target)) continue;   // already scored
+
+      const best = {};
+      for (const p of state.pool.values()) {
+        const k = key(p.name, p.pos);
+        if (state.taken.has(k) || mine.has(k)) continue;
+        if (!best[p.pos] || p.proj > best[p.pos]) best[p.pos] = p.proj;
+      }
+      const predicted = {}, actual = {}, err = {};
+      for (const pos of ['QB', 'RB', 'WR', 'TE', 'K', 'DEF']) {
+        const pv = byPos[pos] && byPos[pos].length ? byPos[pos][0].proj : null;
+        const av = best[pos] ?? null;
+        predicted[pos] = pv; actual[pos] = av;
+        err[pos] = (pv != null && av != null) ? +(av - pv).toFixed(1) : null;
+      }
+      state.realised.push({
+        target, round: Math.ceil(target / CFG.TEAMS),
+        scoredAt: here, lateBy: here - target,
+        predicted, actual, err,
+      });
+      const line = Object.entries(err)
+        .filter(([, v]) => v !== null)
+        .map(([pos, v]) => `${pos} ${v > 0 ? '+' : ''}${v}`).join(', ');
+      say(`scored R${Math.ceil(target / CFG.TEAMS)} horizon (pick ${target}, ` +
+          `${here - target} late): ${line}`);
+    }
+  }
+
   function renderFloors() {
     if (!CFG.SHOW_FLOORS) { if (floorsEl) { floorsEl.remove(); floorsEl = null; } return; }
     const floors = state.floors;

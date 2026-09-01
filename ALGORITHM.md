@@ -184,6 +184,28 @@ best player still available there.
 
 ---
 
+## G. Self-scoring
+
+Each projection is graded against what actually happened. When the draft reaches a
+pick some earlier projection targeted, the best player still available at each
+position is recorded and compared with what that projection predicted.
+
+Measured **at** the target, not whenever we next look. Reading late understates
+every floor, because more players have gone: one running-back error read −19.8
+when measured twelve picks late, against an exact result at the horizon before it.
+Each row keeps the round it was projected from, the round it landed in, and how
+late it was scored, because *where* in the draft a position is mispredicted is
+likely to matter more than any average bias.
+
+`window.__floorScore()` returns the record.
+
+Two horizons from one draft, for reference — too few to conclude anything:
+
+| Target | Measured | QB | RB | WR | TE |
+| --- | --- | ---: | ---: | ---: | ---: |
+| pick 62 | 2 late | +23.8 | 0.0 | −8.0 | +17.9 |
+| pick 79 | 12 late | +6.2 | −19.8 | −8.1 | +6.7 |
+
 ## F. Open questions
 
 - **The opponent mix (O9–O12).** 23 running backs in 32 simulated picks. Every
@@ -196,5 +218,9 @@ best player still available there.
 - **The O10 change is unmeasured.** Offline simulation cannot evaluate it: O10 is
   gated on bench mode, which depends on team rosters, and a synthetic harness has
   none. Only a live mock will show whether it moves the predicted mix.
+- **Where, not whether.** The two samples above disagree on QB and TE (+23.8 then
+  +6.2; +17.9 then +6.7) and are confounded by measurement lag. Only WR looks
+  consistent so far, at about −8 both times. Several drafts of clean at-target
+  scoring are needed before any of it means anything.
 - **Floors are lost on reload.** `state.floors` is in memory, so the deepest
   horizon that V2 reads for reserves resets when the script reloads.

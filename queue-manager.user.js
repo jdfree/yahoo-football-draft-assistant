@@ -83,6 +83,10 @@
     // Read-only panel showing the live ranking and the health of the tracker.
     // pointer-events:none, so it can never intercept a click. Off by default.
     SHOW_OVERLAY: false,
+
+    // The projected-floors strip across the bottom of the centre table. Every
+    // valuation rests on these numbers, so they are worth having on screen.
+    SHOW_FLOORS: true,
     OVERLAY_CORNER: 'bottom-right',   // vertical placement only: 'top…' or 'bottom…'
     // Distance from the right edge, used only if the roster panel cannot be
     // measured. Normally the overlay auto-positions just left of your roster.
@@ -2630,6 +2634,63 @@
    * player. Deliberately does NOT repeat whose pick it is or the round — Yahoo
    * already shows both, and a second copy just goes stale.
    */
+  /**
+   * A strip across the bottom of the centre table showing the projected floors —
+   * the single set of numbers every valuation now rests on.
+   *
+   * Shows the NEAREST horizon still ahead of us: floors are projected forward, so
+   * among the horizons we hold, the lowest one still in the future is the one
+   * bearing on the decision in hand. Older horizons the draft has already passed
+   * are no longer answering a live question.
+   */
+  let floorsEl = null;
+  function renderFloors() {
+    if (!CFG.SHOW_FLOORS) { if (floorsEl) { floorsEl.remove(); floorsEl = null; } return; }
+    const table = playerTable();
+    const floors = state.floors;
+    if (!table || !floors || !floors.size) {
+      if (floorsEl) floorsEl.style.display = 'none';
+      return;
+    }
+
+    const here = draftPosition().overall;
+    let at = null;
+    for (const k of floors.keys()) {
+      if (k >= here && (at === null || k < at)) at = k;       // nearest still ahead
+    }
+    if (at === null) for (const k of floors.keys()) if (at === null || k > at) at = k;
+    const byPos = floors.get(at);
+    if (!byPos) return;
+
+    if (!floorsEl) {
+      floorsEl = document.createElement('div');
+      floorsEl.style.cssText =
+        'position:fixed;z-index:2147483646;pointer-events:none;' +
+        'font:600 11.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.02em;' +
+        'background:rgba(17,19,24,.94);color:#e9edf2;border-radius:6px;' +
+        'padding:7px 12px;display:flex;gap:14px;align-items:center;' +
+        'box-shadow:0 4px 18px rgba(0,0,0,.32);white-space:nowrap;overflow:hidden';
+      document.body.appendChild(floorsEl);
+    }
+    floorsEl.style.display = 'flex';
+
+    const round = Math.ceil(at / CFG.TEAMS);
+    const cells = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'].map((pos) => {
+      const v = byPos[pos] && byPos[pos].length ? byPos[pos][0].proj : null;
+      return `<span style="color:#7c8894">${pos}</span> ` +
+             `<span>${v === null ? '—' : v.toFixed(1)}</span>`;
+    }).join('<span style="color:#39414d">|</span>');
+    floorsEl.innerHTML =
+      `<span style="color:#d99b52">FLOORS R${round}</span>` +
+      `<span style="color:#7c8894">pick ${at}</span>` + cells;
+
+    // Anchor to the bottom edge of the centre table, clamped into the viewport.
+    const r = table.getBoundingClientRect();
+    const w = floorsEl.offsetWidth || 520;
+    floorsEl.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left + (r.width - w) / 2))}px`;
+    floorsEl.style.top = `${Math.min(innerHeight - 40, r.bottom - 42)}px`;
+  }
+
   function renderOverlay() {
     const el = overlay();
     if (!el) { if (overlayEl) { overlayEl.remove(); overlayEl = null; } return; }
@@ -2784,7 +2845,7 @@
 
   let paintErr = null;
   const overlayTimer = setInterval(() => {
-    try { renderOverlay(); annotateQueue(); }
+    try { renderOverlay(); renderFloors(); annotateQueue(); }
     catch (e) {
       // Never swallow silently: a throw here previously left the overlay blank
       // with no explanation anywhere.
@@ -2792,6 +2853,7 @@
     }
   }, 1000);
   window.__queueStop = () => { clearInterval(timer); clearInterval(overlayTimer); clearInterval(autopickTimer);
+    if (floorsEl) { floorsEl.remove(); floorsEl = null; }
     dialogObserver.disconnect(); if (overlayEl) overlayEl.remove();
     document.querySelectorAll('.ys-assist').forEach((e) => e.remove());   // leave the queue clean
     say('stopped'); };

@@ -882,8 +882,7 @@
    * drafter: fill starting slots first by surplus over a replacement starter, then
    * draft for depth with RB/WR weighted up.
    */
-  function projectedChoice(roster, pool, pickNo) {
-    const base = state.baseline || {};
+  function projectedChoice(roster, pool, pickNo, base) {
     const open = openSlots(roster);
 
     // A team will not take a third player at one position sharing a bye week.
@@ -924,8 +923,14 @@
       // picks, which collapsed the RB floor and inflated every back's surplus.
       const boost = (!fillingStarters && (p.pos === 'RB' || p.pos === 'WR'))
         ? 1 + CFG.BENCH_RB_WR_BOOST : 1;
-      let score = p.proj * boost - (base[p.pos] ?? p.proj);
-      if (score < 1) score = 1;                  // a pick happens regardless
+      // No floor. Clamping negative scores to +1 destroyed the ordering among them:
+      // every candidate below the bar became exactly equal, so the tie-break below
+      // stopped breaking ties and made the whole decision. Late in a draft that put
+      // 24 of 30 picks on running backs; with a rolling bar, which sits close to
+      // the board by construction, it was worse still — entire rounds went to one
+      // position. A pick still happens regardless, because the best of several
+      // negative scores is still the best.
+      const score = p.proj * boost - (base[p.pos] ?? p.proj);
       // Ties go to running back.
       if (score > bestScore || (score === bestScore && p.pos === 'RB' && best && best.pos !== 'RB')) {
         best = p; bestScore = score;
@@ -938,9 +943,46 @@
    * Play the draft forward from the last completed pick to our subsequent pick,
    * and report the best projection expected to survive at each position.
    */
+  /**
+   * Floors from the most recently completed projection, flattened to one number per
+   * position, for use as the next projection's baseline. Null until one exists.
+   *
+   * "Most recent" is the deepest horizon reached, since horizons only move forward.
+   * Using the EARLIEST projection instead would pin the bar near preseason values
+   * and reproduce the flattening this exists to fix.
+   */
+  function previousFloorsAsBaseline() {
+    if (!state.floors || !state.floors.size) return null;
+    let best = null, bestAt = -1;
+    for (const [at, byPos] of state.floors) if (at > bestAt) { bestAt = at; best = byPos; }
+    if (!best) return null;
+    const out = {};
+    for (const [pos, ladder] of Object.entries(best)) {
+      if (ladder && ladder.length) out[pos] = ladder[0].proj;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
   async function projectAvailability(currentPick, targetPick) {
     if (!state.baseline) return null;
     const target = targetPick;
+
+    /**
+     * The yardstick opponents are measured against, resolved ONCE here and passed
+     * down — never read from state while the simulation runs.
+     *
+     * The first projection has nothing to go on and uses the static worst-starter
+     * baseline (S4). Every projection after that uses the floors from the most
+     * recent COMPLETED projection instead, so the bar tracks the board rather than
+     * staying pinned to preseason. That is what the late rounds were missing: once
+     * every remaining player sits far below a fixed baseline, every score collapses
+     * onto the +1 floor and the tie-break decides everything.
+     *
+     * Reference integrity: this snapshot is taken before a single pick is
+     * simulated, and the floors this run produces are not written to state.floors
+     * until it has returned. A projection can therefore never read itself.
+     */
+    const base = previousFloorsAsBaseline() || state.baseline;
     const mine = new Set(roster().map((r) => key(r.name, r.pos)));
 
     // Everyone still on the board, best first.
@@ -965,7 +1007,7 @@
       if (slot === CFG.SLOT) continue;                 // our own picks are not simulated
       const who = (state.slotNames || {})[slot] || `slot${slot}`;
       const rost = projectedRosters[who] || (projectedRosters[who] = []);
-      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)), p);
+      const choice = projectedChoice(rost, pool.filter((x) => !gone.has(x.id)), p, base);
       if (!choice) continue;
       gone.add(choice.id);
       rost.push(choice);

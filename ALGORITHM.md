@@ -38,18 +38,19 @@ in one live draft purely because thirty-five players had been drafted in between
 | **O6** | K/DEF late gate | Kickers and defenses are excluded until the last N rounds. A kicker scores positive against baseline from round one, so without this the model drafts them constantly — 11 kickers and 11 defenses in 29 picks, observed. | `OPPONENT_LATE_K_DEF: 2` |
 | **O7** | Bench fallback | If O5 minus O6 leaves nothing — the usual mid-draft case, where a team's only gaps are K and DEF — the team considers **all** positions and takes bench depth. Without this those teams drafted nobody: a 38-pick horizon simulated 2 picks. | — |
 | **O8** | Bye limit | A team will not take a third player at one position sharing a bye week. | — |
-| **O9** | Score | `score = projection × O10 − baseline[position]` | `S4` |
+| **O9** | Score | `score = projection × O10 − bar[position]`, where the **bar rolls forward**: the first projection of a draft uses the static baseline S4, and every projection after it uses the floors from the most recent *completed* projection. The bar therefore tracks the board instead of staying pinned to preseason. Resolved once before any pick is simulated and passed down, and this run's floors are not stored until it returns — so a projection can never read itself. | `S4` seeds it |
 | **O10** | Bench RB/WR boost | In bench mode (O7), an RB's or WR's **projection** is inflated by this fraction. Applied to the projection, not the surplus: scaling a surplus inverts once it goes negative, which pushed backs *down* the board. Applies equally to RB and WR, so it does not by itself favour one over the other. | `BENCH_RB_WR_BOOST: 0.10` |
-| **O11** | Floor | Any score below `+1` becomes `+1`. A pick happens regardless of how poor the board is. | — |
+| **O11** | *(retired)* | There is no floor on the score. Clamping negatives to `+1` made every candidate below the bar exactly equal, so O12 stopped breaking ties and made the entire decision — 24 of 30 late picks went to running back, and with the rolling bar of O9 whole rounds went to a single position. A pick still happens: the best of several negative scores is still the best. | — |
 | **O12** | Tie-break | Ties go to running back. | — |
 | **O13** | Roster caps | A team will not exceed `CAPS[pos]` at any position. | `CAPS` |
 | **O14** | Output | Per position, a ladder of up to **12** surviving players in projection order. The head of each ladder is that position's **floor**. Every horizon computed is retained, keyed by target pick. | — |
 
-**Known weakness.** The mix O9–O12 produces is only roughly right. A live round-7
-projection took 23 running backs out of 32 picks; earlier builds took 28 RB and
-zero WR, or 11 K and 11 DEF. Every floor depends on this, so it is the largest
-single assumption in the system. **O10 is not the cause** — it applies to RB and
-WR alike.
+**The late-round skew, and its cause.** A live round-7 projection took 23 running
+backs out of 32 picks. The cause was O11 and O12 together: once every remaining
+player sat below a fixed baseline, every score clamped to `+1`, and the running-back
+tie-break decided every pick. O10 was ruled out — it applies to RB and WR alike.
+Both halves are now addressed: the bar rolls forward (O9) so it stays near the
+board, and the clamp is gone (O11).
 
 ---
 

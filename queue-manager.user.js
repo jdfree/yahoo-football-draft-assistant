@@ -118,6 +118,17 @@
     // showing the honest points-over-replacement figure. Only the ordering moves.
     BACKUP_RB_WR_WEIGHT: 3,
 
+    // How much to inflate an RB's or WR's PROJECTION when he is being valued as a
+    // bench player, as a fraction. Bench depth matters more at those positions:
+    // you start two of each plus a flex, and they miss time most often.
+    //
+    // This is deliberately a boost to the projection rather than a multiplier on
+    // the surplus. Multiplying the surplus inverts once the surplus goes negative,
+    // which is where most bench players sit by the late rounds, and it pushed RB
+    // and WR down the queue instead of up. It never touches the displayed number —
+    // only the ordering.
+    BENCH_RB_WR_BOOST: 0.10,
+
     // --- same-team bias -----------------------------------------------------
     // Percentage reduction applied to a player's projection when you already hold
     // someone from his NFL team. 0 disables it. 0.10 means a player from a team
@@ -1315,9 +1326,6 @@
       Math.max(...FLEX_POS.map((pos) => replacement(pos, exceptId)));
 
     return avail.filter(legal).map((p) => {
-      const teamMod = sameTeamMultiplier(p, have);
-      const effProj = p.proj * teamMod;          // the penalty lands on the projection
-
       let weight = CFG.WEIGHT_STARTER, role = 'starter';
       if (count(p.pos) >= CFG.STARTERS[p.pos]) {
         if (FLEX_POS.includes(p.pos) && flexUsed < CFG.FLEX) {
@@ -1328,29 +1336,45 @@
       }
 
       // Role decides which bar applies, so it must be settled first.
-      const raw = effProj - (role === 'flex' ? flexReplacement(p.id) : replacement(p.pos, p.id));
+      const bar = role === 'flex' ? flexReplacement(p.id) : replacement(p.pos, p.id);
+
+      // DISPLAYED value: the pure surplus, carrying no modifiers whatsoever.
+      // Everything that shapes preference is applied below, to the sort key only,
+      // so the number on screen always means one thing: points above what you
+      // could get at this slot if you passed.
+      const raw = p.proj - bar;
 
       const pm = playoffModifier(p.team);
       const bm = byeMultiplier(p, have);
-      // The displayed value deliberately EXCLUDES the playoff modifier: schedule
-      // is a separate consideration and folding it in makes the headline number
-      // impossible to reason about. It is surfaced beside the value instead.
-      const val = raw * weight * bm;
-      const playoffDelta = val * (pm - 1);
+      const teamMod = sameTeamMultiplier(p, have);
 
-      // Ranking weight is separate from the displayed value so the overlay stays
-      // honest: only the sort order is affected, never the number shown.
-      const depth = (role === 'reserve' && (p.pos === 'RB' || p.pos === 'WR'))
-        ? CFG.BACKUP_RB_WR_WEIGHT : 1;
-      // Queue preference still uses the COMBINED figure — schedule included.
-      return { ...p, raw: +raw.toFixed(2), val: +val.toFixed(2),
+      /**
+       * Bench depth at RB and WR is worth more than the surplus alone says: you
+       * start two of each plus a flex, and they miss time most often, so a backup
+       * there actually plays.
+       *
+       * The boost lands on the PROJECTION, not on the surplus. Scaling a surplus
+       * breaks down precisely when it matters: by the late rounds nearly every
+       * bench surplus is negative, and multiplying a negative by three pushed RB
+       * and WR DOWN the queue — the reverse of the intent. Observed live at round
+       * 10 with bench values of -0.61, -1.60 and -2.56. Adding to the projection
+       * shifts the surplus up whatever its sign.
+       */
+      const benchBoost = (role === 'reserve' && (p.pos === 'RB' || p.pos === 'WR'))
+        ? 1 + CFG.BENCH_RB_WR_BOOST : 1;
+      const rankRaw = p.proj * benchBoost * teamMod - bar;
+      const sortVal = rankRaw * weight * bm * pm;
+      const playoffDelta = raw * (pm - 1);
+
+      return { ...p, raw: +raw.toFixed(2), val: +raw.toFixed(2),
                playoffDelta: +playoffDelta.toFixed(2),
                tier: ROLE_TIER[role] ?? 2,
-               sortVal: +(val * pm * depth).toFixed(2), depthMult: depth, role,
+               sortVal: +sortVal.toFixed(2), depthMult: +benchBoost.toFixed(2), role,
                gated: isGated(p),
                playoffMod: +pm.toFixed(4), byeMod: +bm.toFixed(3), teamMod: +teamMod.toFixed(3),
-               why: `${p.proj} - repl ${(p.proj - raw).toFixed(1)} = ${raw.toFixed(1)}` +
-                    ` x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` };
+               why: `${p.proj} - repl ${bar.toFixed(1)} = ${raw.toFixed(1)} shown;` +
+                    ` rank x${weight}(${role}) x${pm.toFixed(3)}(po) x${bm.toFixed(2)}(bye)` +
+                    (benchBoost !== 1 ? ` proj+${Math.round((benchBoost - 1) * 100)}%(bench)` : '') };
     // Rank by ROLE first, then by value inside the role.
     //
     // The backup RB/WR multiplier is meant to say that bench depth matters more at
@@ -2121,6 +2145,9 @@
         const repl = p.proj - (Number.isFinite(p.raw) ? p.raw : 0);
         bits.push(`scores ${Math.round(p.proj)}`);
         bits.push(`${Math.round(repl)} if you wait`);
+        if (p.playoffMod && Math.abs(p.playoffMod - 1) > 0.0005) {
+          bits.push(`playoff ×${p.playoffMod.toFixed(3)}`);
+        }
         if (p.role === 'starter') bits.push(`fills ${p.pos} slot`);
         else if (p.role === 'flex') bits.push('fills flex');
         else if (p.role === 'reserve') bits.push('bench only');
@@ -2129,7 +2156,9 @@
         if (p.byeMod && p.byeMod < 1) bits.push(`bye clash −${((1 - p.byeMod) * 100).toFixed(0)}%`);
         if (p.teamMod && p.teamMod < 1) bits.push(`teammate −${((1 - p.teamMod) * 100).toFixed(0)}%`);
         // Ranked-up for depth, but the GAIN shown stays the honest figure.
-        if (p.depthMult && p.depthMult > 1) bits.push(`depth ×${p.depthMult} (rank only)`);
+        if (p.depthMult && p.depthMult > 1) {
+          bits.push(`bench depth +${Math.round((p.depthMult - 1) * 100)}% (rank only)`);
+        }
         if (p.gated) bits.push('held until the last rounds');
       }
       return `<div style="display:flex;gap:6px;margin-top:4px;opacity:${dim ? 0.6 : 1}">` +

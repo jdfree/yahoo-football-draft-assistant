@@ -15,6 +15,34 @@ node fetch-team-context.js --playoffs 15,16,17 --swing 0.10
 # 3. Set CFG.SLOT and CFG.TEAMS, leave DRY_RUN true, run a mock, read the log.
 ```
 
+## Displayed values carry no modifiers
+
+The number shown for a player is the **raw surplus**: his projection minus what
+you could get at that slot if you passed. Nothing else is folded in — not the
+role weight, not the bye clash, not the teammate penalty, not the bench boost,
+not the playoff schedule. All of those shape the queue ORDER only.
+
+The playoff schedule is shown alongside as its own factor (`playoff ×1.028`)
+rather than being blended into the headline number, so a value can always be
+read one way: points above the alternative.
+
+## `BENCH_RB_WR_BOOST` — bench depth at RB and WR
+
+Default `0.10`. Inflates an RB's or WR's **projection** by this fraction when he
+is being valued as a bench player. Bench depth is worth more at those positions:
+you start two of each plus a flex, and they miss time most often.
+
+It boosts the projection rather than multiplying the surplus, and that detail
+matters. Multiplying the surplus inverts as soon as the surplus goes negative,
+which is where most bench players sit by the late rounds — live, with bench
+values of −0.61, −1.60 and −2.56, a ×3 multiplier pushed RB and WR *down* the
+queue rather than up. A projection boost shifts the surplus upward whatever its
+sign.
+
+Not to be confused with `BACKUP_RB_WR_WEIGHT`, which is the ×3 used inside the
+opponent simulation (see [PROJECTION.md](PROJECTION.md)). That one is safe as a
+multiplier because surpluses are floored at +1 before it applies.
+
 ## `LATE_ONLY` — positions held to the last two rounds
 
 Default `[]` — nothing is held back.

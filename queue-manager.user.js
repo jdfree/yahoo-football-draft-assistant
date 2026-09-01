@@ -670,7 +670,7 @@
     exhausted: {},          // positions with nothing left to re-read
     working: false,         // true while we are clicking in the queue UI
     ours: new Set(),        // "NAME|POS" of entries WE added, persisted per room
-    human: new Set(),       // entries seen ARRIVING without us; never reordered
+
     queueSynced: false,     // has the queue been read once? see syncQueue
     lastReconciledRound: null,  // reorder once per round of floors, not per pick
     floors: new Map(),      // target pick -> floors; bench reads the deepest
@@ -718,7 +718,16 @@
   const weQueued = (p) => state.ours.has(key(p.name, p.pos));
   // Entries reconciliation must never move: only those observed ARRIVING in the
   // queue without us adding them. Anything else is ours to manage.
-  const isHuman = (p) => state.human.has(key(p.name, p.pos));
+  // There is deliberately no "this one is the human's" concept. Every attempt to
+  // infer it from the queue produced false positives — M. Pittman Jr., J. Williams
+  // and others were marked as the human's despite the assistant having queued them
+  // — and the mark meant "never reorder, never remove", which froze entries we had
+  // placed ourselves. A queue read simply cannot distinguish "you added this" from
+  // "this was already here" across a reload or a tab switch.
+  //
+  // The assistant therefore manages every entry, and your intent is respected
+  // through a signal that IS reliable: pull the same player out VETO_AFTER times
+  // and he is never queued again.
 
   function foldPicks() {
     let n = 0;
@@ -1666,10 +1675,6 @@
      * strays accumulated across reloads.
      */
     if (state.queueSynced) {
-      for (const p of live) {
-        if (!weQueued(p)) state.human.add(key(p.name, p.pos));
-      }
-
       /**
        * Count the players YOU pull out of the queue, and after VETO_AFTER of them
        * stop putting that player back.
@@ -1976,12 +1981,6 @@
       if (seen[p.pos] > positionLimit(p.pos, b2b)) mark(p);
     }
 
-    // Never remove what the human queued themselves.
-    const yours = view.filter((p) => bad.has(`${p.name}|${p.pos}`) && isHuman(p));
-    if (yours.length) {
-      say(`leaving your own entries alone: ${yours.map((p) => p.name).join(', ')}`);
-      yours.forEach((p) => bad.delete(`${p.name}|${p.pos}`));
-    }
 
     if (!bad.size) return [];
     const out = await removeFromQueue((pl) => bad.has(`${pl.name}|${pl.pos}`));
@@ -2080,7 +2079,7 @@
 
     // Only entries the ASSISTANT queued are ours to move; the human's stay put.
     const current = queueView().filter((pl) => pl && pl.pos && pl.pos !== '?');
-    const ours = current.filter((pl) => !isHuman(pl));
+    const ours = current;
 
     // MEMBERSHIP is reconciled; ORDER is not, unless asked for.
     //
@@ -2145,7 +2144,7 @@
     for (const victim of wrong) {
       if (myTurn()) { say('your turn started — stopping reconciliation'); break; }
       const vKey = key(victim.name, victim.pos);
-      const gone = await removeFromQueue((pl) => !isHuman(pl) && key(pl.name, pl.pos) === vKey);
+      const gone = await removeFromQueue((pl) => key(pl.name, pl.pos) === vKey);
       if (gone.length) removed++;
     }
     if (added || removed) {
@@ -2690,7 +2689,7 @@
       `<div style="display:flex;color:#7c8894;margin-top:4px;font-size:10px;letter-spacing:.06em">` +
       `<span style="flex:1">PLAYER</span><span style="width:44px;text-align:right">GAIN</span>` +
       `<span style="width:38px;text-align:right">SCHED</span></div>` +
-      (q.length ? q.map((p, i) => row(p, i + 1, false, isHuman(p))).join('')
+      (q.length ? q.map((p, i) => row(p, i + 1, false, false)).join('')
                 : '<div style="color:#7c8894;margin-top:4px">empty</div>') +
       (next.length ? `<div style="color:#7c8894;border-top:1px dashed #2b333c;margin-top:7px;padding-top:4px">NEXT UP</div>` +
         next.map((p) => row(p, '·', true, false)).join('') : '') +
@@ -2763,12 +2762,8 @@
       }
       const sched = Number.isFinite(v.playoffDelta) && Math.abs(v.playoffDelta) >= 0.05
         ? `  ${v.playoffDelta > 0 ? '+' : '−'}${Math.abs(v.playoffDelta).toFixed(1)}` : '';
-      // Mark what YOU put in the queue. Those entries are never reordered and
-      // never removed by the assistant, so the mark is also a statement of who
-      // controls that row: only you can take it out.
-      const mine = isHuman(p) ? 'YOURS ' : '';
-      tag.textContent = mine + (v.val > 0 ? '+' : '') + v.val.toFixed(1) + sched;
-      tag.style.color = mine ? '#6b3fa0' : (v.val > 0 ? '#1a7f4b' : '#8b96a3');
+      tag.textContent = (v.val > 0 ? '+' : '') + v.val.toFixed(1) + sched;
+      tag.style.color = v.val > 0 ? '#1a7f4b' : '#8b96a3';
     }
   }
 

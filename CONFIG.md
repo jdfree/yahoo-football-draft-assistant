@@ -42,8 +42,14 @@ assistant stops putting him back.
 A single removal is never treated as a verdict: a player usually leaves the queue
 because he was drafted, and the picks feed can lag the queue by a moment. A
 disappearance is therefore only suspected, then counted on the next pass once the
-feed has caught up and he is still undrafted. Entries you added yourself are
-marked `YOURS` in the queue and are never reordered or removed by the assistant.
+feed has caught up and he is still undrafted.
+
+This is the **only** signal of your intent that the assistant trusts. There is
+deliberately no "this entry is yours" concept: every attempt to infer ownership
+from the queue produced false positives, marking players the assistant had queued
+itself, and because the mark meant "never reorder, never remove" it froze those
+entries permanently. A queue read cannot distinguish "you added this" from "this
+was already here" across a reload or a tab switch. Repeated removal can.
 
 ## Displayed values carry no modifiers
 

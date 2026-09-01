@@ -114,6 +114,17 @@
     // one pick later.
     HORIZON_ROUNDS: 2,
 
+    // How close to our turn the projection is run, in picks. Running it late means
+    // it sees the picks that just happened, so a run on a position is priced in
+    // rather than averaged away by a projection taken at the top of the round.
+    PROJECT_AT_PICKS_AWAY: 3,
+
+    // How many times you must pull the same player out of the queue before we stop
+    // putting him back. One removal is ambiguous — a player can leave the queue
+    // because he was drafted a moment before the feed caught up — so a single
+    // removal is never treated as a verdict.
+    VETO_AFTER: 3,
+
     // --- replacement horizon -------------------------------------------------
     // How many rounds to assume a position goes undrafted if you pass on it now.
     // Comparing against "what could I get one pick later" understates the cost of
@@ -664,6 +675,12 @@
     human: new Set(),       // entries seen ARRIVING without us; never reordered
     queueSynced: false,     // has the queue been read once? see syncQueue
     lastReconciledRound: null,  // reorder once per round of floors, not per pick
+    floors: new Map(),      // target pick -> floors; bench reads the deepest
+    lastFillTurn: null,     // our pick number the last full rebuild was run for
+    removals: {},           // "NAME|POS" -> times YOU have taken him out
+    pendingRemoval: new Set(),  // suspected removals, confirmed on the next pass
+    vetoed: new Set(),      // struck out after VETO_AFTER removals; never re-queued
+    selfRemoved: new Set(), // removals WE made, so they are never counted as yours
     baseline: null,         // worst-starter projection per position; computed once
     teamRosters: {},        // drafter name -> [players], accumulated from the feed
     slotNames: {},          // draft slot -> drafter name, learned from round one
@@ -852,6 +869,16 @@
     const T = CFG.TEAMS;
     return (round % 2 === 1) ? (round - 1) * T + CFG.SLOT : round * T - CFG.SLOT + 1;
   }
+  /** Our Nth pick from here: n=1 is the pick in hand, n=3 the third-from-next. */
+  function ourPickAhead(currentPick, n) {
+    let p = ourNextPickAfter(currentPick);
+    for (let i = 1; i < n; i++) p = ourNextPickAfter(p + 1);
+    return Math.min(p, CFG.TEAMS * rosterSize());
+  }
+
+  /** How many picks — ours included — until we are on the clock. */
+  const picksUntilOurTurn = (currentPick) => ourNextPickAfter(currentPick) - currentPick;
+
   function subsequentPick(currentPick) {
     const imminent = ourNextPickAfter(currentPick);      // the pick in hand
     const round = Math.ceil(imminent / CFG.TEAMS);
@@ -934,9 +961,9 @@
    * Play the draft forward from the last completed pick to our subsequent pick,
    * and report the best projection expected to survive at each position.
    */
-  async function projectAvailability(currentPick) {
+  async function projectAvailability(currentPick, targetPick) {
     if (!state.baseline) return null;
-    const target = subsequentPick(currentPick);
+    const target = targetPick || subsequentPick(currentPick);
     const mine = new Set(roster().map((r) => key(r.name, r.pos)));
 
     // Everyone still on the board, best first.
@@ -1159,12 +1186,30 @@
    * measured against himself — the bug that made the top receiver at a position
    * score zero surplus and concluded that passing on him would leave him there.
    */
+  /**
+   * Project once per turn, shortly before we are on the clock, out to our
+   * THIRD-from-next pick.
+   *
+   * Running it close to our turn is the point: it then reflects the picks that
+   * have actually just happened, so a run on a position is priced in rather than
+   * being averaged away by a projection computed at the top of the round.
+   *
+   * Every horizon's floors are kept, not just the latest. Starters are measured
+   * against the near floor and bench players against the deepest one available —
+   * a bench player can wait, so the honest question for him is what is left at the
+   * far end, not at our next pick.
+   */
   async function ensureProjection(currentPick) {
-    const rd = roundNow();
-    if (state.proj && state.proj.round === rd && state.proj.teams === CFG.TEAMS) return state.proj;
     if (!state.baseline) return null;
-    const sim = await projectAvailability(currentPick);
+    const away = picksUntilOurTurn(currentPick);
+    if (away > CFG.PROJECT_AT_PICKS_AWAY) return state.proj;
+    const turn = ourNextPickAfter(currentPick);
+    if (state.proj && state.proj.turn === turn && state.proj.teams === CFG.TEAMS) return state.proj;
+    const rd = roundNow();
+    const started = Date.now();
+    const sim = await projectAvailability(currentPick, ourPickAhead(currentPick, 3));
     if (!sim) return null;
+    const tookMs = Date.now() - started;
     const byPos = {};
     for (const [pos, list] of Object.entries(sim.expected)) {
       byPos[pos] = list.slice(0, 12).map((p) => ({ id: p.id, proj: p.proj }));
@@ -1177,8 +1222,11 @@
       const pl = state.pool.get(id);
       if (pl) goneByPos[pl.pos] = (goneByPos[pl.pos] || 0) + 1;
     }
-    state.proj = { round: rd, teams: CFG.TEAMS, target: sim.target, byPos,
-                   from: currentPick, simulated: sim.simulated, goneByPos };
+    state.proj = { round: rd, turn, teams: CFG.TEAMS, target: sim.target, byPos,
+                   from: currentPick, simulated: sim.simulated, goneByPos, tookMs };
+    // Keep every horizon we have computed, keyed by the pick it reached. Bench
+    // valuation reads the deepest of them.
+    state.floors.set(sim.target, byPos);
     const shown = Object.entries(byPos)
       .map(([pos, l]) => `${pos} ${l.length ? l[0].proj : '-'}`).join(', ');
     // Label with the round the horizon is anchored to — the round of the pick we
@@ -1186,7 +1234,7 @@
     // round those differ, and the log read "round 13" while measuring from 14.
     const anchor = Math.ceil(ourNextPickAfter(currentPick) / CFG.TEAMS);
     say(`projection from round ${anchor} (picks ${currentPick}-${sim.target}, ` +
-        `${sim.simulated} simulated, gone ${JSON.stringify(goneByPos)}): ${shown}`);
+        `${sim.simulated} simulated in ${tookMs}ms, gone ${JSON.stringify(goneByPos)}): ${shown}`);
     return state.proj;
   }
 
@@ -1274,7 +1322,8 @@
     const avail = [...state.pool.values()]
       .filter((p) => !state.taken.has(key(p.name, p.pos)))
       .filter((p) => !mine.has(key(p.name, p.pos)))
-      .filter((p) => !planned.has(p.id));
+      .filter((p) => !planned.has(p.id))
+      .filter((p) => !state.vetoed.has(key(p.name, p.pos)));
 
     // A required position we can no longer defer overrides everything.
     const missing = Object.entries(CFG.STARTERS)
@@ -1369,7 +1418,27 @@
      * `exceptId` matters: a player is never his own fallback. Reusing one
      * replacement per position made the best available player score zero surplus.
      */
-    const replacement = (pos, exceptId) => {
+    /** Floors from the deepest horizon we have projected, for bench valuation. */
+    const deepestFloors = () => {
+      let best = null, bestAt = -1;
+      for (const [at, byPosn] of state.floors) if (at > bestAt) { bestAt = at; best = byPosn; }
+      return best;
+    };
+
+    /**
+     * The bar a candidate must clear, which depends on what he would be.
+     *
+     * A STARTER is measured against the higher of the near floor and the
+     * worst-starter baseline. The floor alone is not enough: late on, the best
+     * player left at a position can be well below starting calibre, and measuring
+     * against him would make a replacement-level body look like an upgrade. The
+     * baseline is the floor beneath the floor.
+     *
+     * A BENCH player is measured against the deepest horizon we have projected.
+     * He is not competing for this pick so much as for a late one, and the honest
+     * question is what will still be there at the far end of the draft.
+     */
+    const replacement = (pos, exceptId, role) => {
       const l = byPos[pos].filter((p) => p.id !== exceptId);   // sorted by projection
       if (!l.length) return 0;
       // Kickers and defenses are measured against the END of the draft, not the
@@ -1379,6 +1448,12 @@
       // "twelve deep" rule while skill positions moved to expected replacement
       // made K and DEF look far worse than they are.
       // Preferred: what the simulation says is still there at our subsequent pick.
+      if (role === 'reserve') {
+        const deep = deepestFloors();
+        const survivor = deep && deep[pos] && deep[pos].find((p) => p.id !== exceptId);
+        if (survivor) return survivor.proj;
+      }
+
       if (projected && projected.byPos[pos]) {
         // The BEST survivor, for every candidate — not a ladder indexed by how many
         // of this position we have already queued.
@@ -1391,7 +1466,11 @@
         // ladder made those numbers positive by measuring against a bar nobody
         // actually faces, which hid exactly that signal.
         const survivor = projected.byPos[pos].find((p) => p.id !== exceptId);
-        if (survivor) return survivor.proj;
+        if (survivor) {
+          // A starting slot is never worth less than replacement-level starter.
+          const floorBeneath = state.baseline ? (state.baseline[pos] ?? -Infinity) : -Infinity;
+          return Math.max(survivor.proj, floorBeneath);
+        }
       }
       // Fallback while the simulation has no opinion (no baseline yet, or a
       // position it never reached): the ADP survival model.
@@ -1429,7 +1508,7 @@
      * 162.4 proj) outranked D. Montgomery (RB, 185.2 proj) for the same flex slot.
      */
     const flexReplacement = (exceptId) =>
-      Math.max(...FLEX_POS.map((pos) => replacement(pos, exceptId)));
+      Math.max(...FLEX_POS.map((pos) => replacement(pos, exceptId, 'flex')));
 
     return avail.filter(legal).map((p) => {
       let weight = CFG.WEIGHT_STARTER, role = 'starter';
@@ -1442,7 +1521,7 @@
       }
 
       // Role decides which bar applies, so it must be settled first.
-      const bar = role === 'flex' ? flexReplacement(p.id) : replacement(p.pos, p.id);
+      const bar = role === 'flex' ? flexReplacement(p.id) : replacement(p.pos, p.id, role);
 
       // DISPLAYED value: the pure surplus, carrying no modifiers whatsoever.
       // Everything that shapes preference is applied below, to the sort key only,
@@ -1569,6 +1648,36 @@
     if (state.queueSynced) {
       for (const p of live) {
         if (!weQueued(p)) state.human.add(key(p.name, p.pos));
+      }
+
+      /**
+       * Count the players YOU pull out of the queue, and after VETO_AFTER of them
+       * stop putting that player back.
+       *
+       * Judged in two passes. A player who vanishes from the queue has usually
+       * just been drafted, and the picks feed can lag the queue by a moment — a
+       * single-pass version blamed the human for a departure that was really a
+       * pick. So a disappearance is only SUSPECTED here, and counted on the next
+       * pass, once the feed has caught up and he is still undrafted.
+       */
+      const now = new Set(live.map((p) => key(p.name, p.pos)));
+      for (const k of [...state.pendingRemoval]) {
+        state.pendingRemoval.delete(k);
+        if (now.has(k) || state.taken.has(k)) continue;      // came back, or was drafted
+        const n = (state.removals[k] = (state.removals[k] || 0) + 1);
+        if (n >= CFG.VETO_AFTER) {
+          state.vetoed.add(k);
+          say(`${k} removed ${n} times — will not queue again`);
+        } else {
+          say(`${k} removed by you (${n}/${CFG.VETO_AFTER})`);
+        }
+      }
+      for (const prev of state.queue || []) {
+        if (!prev || !prev.pos) continue;
+        const k = key(prev.name, prev.pos);
+        if (now.has(k) || state.taken.has(k)) continue;
+        if (state.selfRemoved.has(k)) { state.selfRemoved.delete(k); continue; }
+        state.pendingRemoval.add(k);
       }
     }
     state.queueSynced = true;
@@ -1787,6 +1896,7 @@
       await sleep(700);
       if (queueCount() >= before) break;
       removed.push(`${info.name} (${info.pos})`);
+      state.selfRemoved.add(key(info.name, info.pos));   // ours, never counted as yours
       state.queue = state.queue.filter((q) => !(q.name === info.name && q.pos === info.pos));
     }
     if (mustSwitch && /^Picks$/i.test(was) && tabs.picks) { tabs.picks.click(); await sleep(250); }
@@ -2266,46 +2376,48 @@
       // reload wipes anything we remembered — so nothing is carried forward.
       await syncQueue();
 
-      // Refresh the picks feed before RE-PROJECTING as well as before rebuilding.
-      // The projection is only as good as the opponent rosters behind it, and those
-      // come from this feed. A projection once ran with teamRosters empty: every
-      // simulated team looked like it still needed a kicker and a defense, so the
-      // model spent 29 picks on 11 kickers and 11 defenses and removed no receivers
-      // at all, leaving the WR floor far too high.
-      const needProjection = !state.proj || state.proj.round !== roundNow();
-      if (weDrafted || short || needProjection) await syncPicksFromPanel();
+      const here = draftPosition().overall;
+      const away = picksUntilOurTurn(here);
+      const turn = ourNextPickAfter(here);
+      const window = Math.max(1, Math.floor(CFG.QUEUE_SIZE / 2));
 
-      // Refresh the round's projection before anything reads it. Once per round is
-      // enough — what survives to our subsequent pick does not meaningfully change
-      // between two picks of the same round — and it runs here, once, rather than
-      // inside the ranking that planQueue calls for every queue slot.
-      await ensureProjection(draftPosition().overall);
+      /**
+       * A full rebuild happens ONCE per turn, a few picks before we are on the
+       * clock — not on a timer, and not after every pick.
+       *
+       * Rebuilding late is what makes it worth doing at all: the projection and
+       * the queue then reflect the picks that just happened, so a run on a
+       * position is priced in. Rebuilding early, or repeatedly, spends a lot of
+       * clicking to arrive at the same answer against staler information.
+       *
+       * Back-to-back picks are deliberately excluded. When our next two picks sit
+       * within the same window there is no chance to rebuild usefully between
+       * them, so we build once, before the first, and leave it.
+       */
+      const dueForRebuild = away <= window
+        && state.lastFillTurn !== turn
+        && !(state.lastFillTurn && turn - state.lastFillTurn <= window);
 
-      // Keep the queue honest against the CURRENT board, not just after our own
-      // picks. Entries were only ever added, and pruneQueue drops the illegal —
-      // never the merely outdated — so a defense queued in round 1 at +3.5 sat
-      // there into round 2 while a receiver worth +25.6 went unqueued. Every pick
-      // by anyone changes what is available, so the plan is reconciled each cycle.
-      // The rebuild is a diff: whatever still earns its place stays put.
+      // The picks feed feeds the projection, which feeds the rebuild — so refresh
+      // it when either is about to run. A projection once ran with teamRosters
+      // empty and spent 29 simulated picks on 11 kickers and 11 defenses.
+      if (weDrafted || dueForRebuild || away <= CFG.PROJECT_AT_PICKS_AWAY) {
+        await syncPicksFromPanel();
+      }
+
+      // Projects only when close to our turn; a no-op otherwise.
+      await ensureProjection(here);
+
       if (weDrafted) state.lastRoster = rc;
 
-      // Two different jobs, on two different clocks.
-      //
-      // MEMBERSHIP — dropping entries the ranking no longer justifies — is checked
-      // every cycle. It costs nothing when the queue is right, and gating it by
-      // round left plainly wrong entries stuck: a defense worth +3.5 and a kicker
-      // worth +2.1 sat in the queue with backs and receivers worth 19 to 50
-      // unqueued, and nothing could remove them until the next round.
-      //
-      // ORDER is rewritten only when a new round of floors lands, or right after
-      // our own pick. Yahoo has no reorder primitive, so resequencing means
-      // removing and re-adding; doing that against a board that shifts with every
-      // pick is pure thrash, and the floors are what actually move the ranking.
-      // Only our own pick justifies rewriting the queue. Everything else just
-      // replaces players who have actually been drafted.
-      const projRound = state.proj ? state.proj.round : null;
-      if (weDrafted) state.lastReconciledRound = projRound;
-      await reconcileQueue(weDrafted);
+      // Outside the rebuild window the queue is left alone entirely, apart from
+      // replacing players who have actually been drafted — that top-up is handled
+      // by refill below. This is what keeps the queue still.
+      if (dueForRebuild) {
+        state.lastFillTurn = turn;
+        say(`rebuild window: ${away} picks until pick ${turn}`);
+      }
+      await reconcileQueue(dueForRebuild);
 
       // Flag the overlay while we click around the queue UI, so the human knows to
       // keep hands off rather than fighting us for the mouse.
@@ -2524,8 +2636,12 @@
       }
       const sched = Number.isFinite(v.playoffDelta) && Math.abs(v.playoffDelta) >= 0.05
         ? `  ${v.playoffDelta > 0 ? '+' : '−'}${Math.abs(v.playoffDelta).toFixed(1)}` : '';
-      tag.textContent = (v.val > 0 ? '+' : '') + v.val.toFixed(1) + sched;
-      tag.style.color = v.val > 0 ? '#1a7f4b' : '#8b96a3';
+      // Mark what YOU put in the queue. Those entries are never reordered and
+      // never removed by the assistant, so the mark is also a statement of who
+      // controls that row: only you can take it out.
+      const mine = isHuman(p) ? 'YOURS ' : '';
+      tag.textContent = mine + (v.val > 0 ? '+' : '') + v.val.toFixed(1) + sched;
+      tag.style.color = mine ? '#6b3fa0' : (v.val > 0 ? '#1a7f4b' : '#8b96a3');
     }
   }
 

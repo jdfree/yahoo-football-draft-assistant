@@ -97,7 +97,22 @@ a mismatch is logged.
 
 ## 2. Predicting the picks between now and our subsequent pick
 
-**Run once per round, asynchronously, and cached.** The output is one number per
+**Run once per turn, three picks before we are on the clock, out to our
+THIRD-from-next pick.** Running it late is the point: it then reflects the picks
+that have just happened, so a run on a position is priced in rather than averaged
+away by a projection taken at the top of the round.
+
+Every horizon's floors are kept, not just the latest, because starters and bench
+players are measured against different ones:
+
+- a **starter** against the higher of the near floor and the worst-starter
+  baseline — the floor alone is not enough, since late on the best player left at
+  a position can be well below starting calibre, and measuring against him would
+  make a replacement-level body look like an upgrade;
+- a **bench player** against the deepest horizon projected, since he is competing
+  for a late pick rather than this one.
+
+**Run asynchronously, and cached.** The output is one number per
 position — the best projection expected to still be there at our subsequent pick
 — and that does not meaningfully change between two picks of the same round.
 

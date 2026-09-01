@@ -15,6 +15,36 @@ node fetch-team-context.js --playoffs 15,16,17 --swing 0.10
 # 3. Set CFG.SLOT and CFG.TEAMS, leave DRY_RUN true, run a mock, read the log.
 ```
 
+## Queue rebuild schedule
+
+A full rebuild happens **once per turn**, `QUEUE_SIZE / 2` picks before you are on
+the clock. At every other moment the queue is left alone apart from replacing
+players who have actually been drafted — one out, one in, appended.
+
+Rebuilding late is what makes it worth doing: the projection and the queue then
+reflect the picks that just happened, so a run on a position is priced in.
+Rebuilding early, or repeatedly, spends a great deal of clicking to reach the same
+answer against staler information.
+
+Back-to-back picks rebuild **once**, before the first. When your next two picks
+fall inside the same window there is no chance to rebuild usefully between them.
+
+## `PROJECT_AT_PICKS_AWAY` — when the projection runs
+
+Default `3`. Picks before your turn at which the floors are recomputed, out to
+your third-from-next pick.
+
+## `VETO_AFTER` — how many removals become a veto
+
+Default `3`. Pull the same player out of the queue this many times and the
+assistant stops putting him back.
+
+A single removal is never treated as a verdict: a player usually leaves the queue
+because he was drafted, and the picks feed can lag the queue by a moment. A
+disappearance is therefore only suspected, then counted on the next pass once the
+feed has caught up and he is still undrafted. Entries you added yourself are
+marked `YOURS` in the queue and are never reordered or removed by the assistant.
+
 ## Displayed values carry no modifiers
 
 The number shown for a player is the **raw surplus**: his projection minus what

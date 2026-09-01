@@ -1464,7 +1464,27 @@
      * `exceptId` matters: a player is never his own fallback. Reusing one
      * replacement per position made the best available player score zero surplus.
      */
-    /** Floors from the deepest horizon we have projected, for bench valuation. */
+    /**
+   * The best player still on the board at each position, right now.
+   *
+   * A floor claims "this good a player will still be there later". The pool only
+   * ever shrinks, so that claim is refuted the moment the board falls below it —
+   * and it does: a projection made at pick 74 promised a 173.46 receiver at pick
+   * 126, while the best on the board at pick 111 was already 139.09. Between our
+   * turns at slot 14 there are 27 picks, so a stale floor can stand for fifty.
+   */
+  function bestAvailableNow() {
+    const mine = new Set(roster().map((r) => key(r.name, r.pos)));
+    const best = {};
+    for (const p of state.pool.values()) {
+      const k = key(p.name, p.pos);
+      if (state.taken.has(k) || mine.has(k)) continue;
+      if (best[p.pos] === undefined || p.proj > best[p.pos]) best[p.pos] = p.proj;
+    }
+    return best;
+  }
+
+  /** Floors from the deepest horizon we have projected, for bench valuation. */
     const deepestFloors = () => {
       let best = null, bestAt = -1;
       for (const [at, byPosn] of state.floors) if (at > bestAt) { bestAt = at; best = byPosn; }
@@ -1532,7 +1552,11 @@
         // The baseline is still computed, and still used as the opponent model's
         // positional yardstick, where our own horizons do not transfer.
         const survivor = projected.byPos[pos].find((p) => p.id !== exceptId);
-        if (survivor) return survivor.proj;
+        if (survivor) {
+          // Never claim more will be there later than is there now.
+          const now = liveBest[pos];
+          return now === undefined ? survivor.proj : Math.min(survivor.proj, now);
+        }
       }
       // Fallback for a position the simulation never reached — it holds no
       // survivors there, so assume nobody at it gets drafted and the best man left
@@ -2770,10 +2794,14 @@
     floorsEl.style.display = 'flex';
 
     const round = Math.ceil(at / CFG.TEAMS);
+    const live = bestAvailableNow();
     const cells = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'].map((pos) => {
-      const v = byPos[pos] && byPos[pos].length ? byPos[pos][0].proj : null;
+      const raw = byPos[pos] && byPos[pos].length ? byPos[pos][0].proj : null;
+      const now = live[pos];
+      const v = (raw === null) ? null : (now === undefined ? raw : Math.min(raw, now));
+      const stale = raw !== null && now !== undefined && raw > now + 0.05;
       return `<span style="color:#7c8894">${pos}</span> ` +
-             `<span>${v === null ? '—' : v.toFixed(1)}</span>`;
+             `<span${stale ? ' style="color:#e08a6e"' : ''}>${v === null ? '—' : v.toFixed(1)}</span>`;
     }).join('<span style="color:#39414d">|</span>');
     floorsEl.innerHTML =
       `<span style="color:#d99b52">FLOORS R${round}</span>` +

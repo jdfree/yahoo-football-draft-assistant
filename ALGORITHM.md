@@ -83,6 +83,14 @@ exists only among reserves (V6).
 | flex | the **highest** floor across RB/WR/TE — a flex slot is contested by all three, so passing on a tight end leaves you the best flex-eligible player, not another tight end |
 | reserve | the floor from the **deepest** horizon projected — a bench player competes for a late pick, not this one |
 
+**V13 — the floor is clamped to the board.** A floor claims "this good a player
+will still be there later", and the pool only shrinks, so the claim is refuted the
+moment the board falls below it. The bar is therefore `min(floor, best available
+now)`. Live: a projection made at pick 74 promised a 173.46 receiver at pick 126
+while the best on the board at pick 111 was already 139.09 — and at slot 14, where
+turns are 27 picks apart, that stale floor stood for fifty picks. The strip shows
+the clamped figure, in red when the projection has been overtaken.
+
 **V3 — self-exclusion.** A player is never his own replacement; the ladder (O14)
 is searched skipping his own id. Without it the best player at a position scored
 zero surplus and the model concluded that passing on him would leave him there.

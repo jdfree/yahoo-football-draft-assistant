@@ -26,7 +26,7 @@ become the **next projection's** bar. S4 survives only to seed the first run.
 | **S1** | Pool read | Six position sweeps of the player table, top 100 each. Captures Yahoo id, name, position, NFL team, projected points, ADP, bye. Projections are already scored under this league's rules, so scoring settings never have to be known. Read once — none of it changes during a draft. |
 | **S2** | Drafted read | Yahoo's `Drafted` pill widens the table to include players already taken. Swept the same way and merged into the pool **by id**, so arming mid-draft still sees the whole league. Names collide (two `J. Daniels` at QB, two `B. Robinson` at RB), so id is the only safe key. |
 | **S3** | League shape | Slot comes from the draft-room URL. Team count is *counted*, from the draft-order strip: a snake mirrors at the turn (`… Hugh, Ira, Ira, Hugh …`) and the mirror position is the team count. Verified by checking the first `2T` entries read the same in both directions. Fallback, if the strip is absent: every `ROUND r, PICK n` constrains `T` via `(r−1)·T < n ≤ r·T`, which resolves at the first pick of round 2. |
-| **S4** | Baseline | One number per position: the projection of the **Nth-best player there**, where `N = TEAMS × slots`. RB and WR get **one more slot than the lineup lists**, because the flex is filled from them — with two RB slots the bar is the `TEAMS × 3`-th back. Computed once, never recomputed, and used by every projection. |
+| **S4** | Baseline | One number per position: the projection of the **Nth-best player there**, where `N = TEAMS × slots`. RB and WR get `FLEX_EXTRA_SLOTS` **more** than the lineup lists — half a slot each, because the flex is filled from them and they *share* it. Giving both a full extra slot added `2 × TEAMS` places where the league has `TEAMS`, and dropped the RB bar onto the 42nd back at 115.85, past a cliff costing twenty points in three players. Computed once, never recomputed. |
 
 S4 is frozen because it describes the league's shape, not the current board.
 Recomputing it against a depleting pool walks it downward — RB fell 108.4 → 92.6
@@ -162,6 +162,7 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `WEIGHT_RESERVE` | 0.2 | V5c |
 | `BENCH_RB_WR_MULTIPLIER` | 2 | V6 |
 | `SIM_ROSTER_LIMITS` | QB2 TE2 K1 DEF1 | O15 |
+| `FLEX_EXTRA_SLOTS` | 0.5 | S4 |
 | `PROJECT_AT_PICKS_AWAY` | 3 | O1 |
 | `SAME_TEAM_PENALTY` | 0 | V7 |
 | `BYE_FACTOR` | 0.5 | V8 |

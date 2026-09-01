@@ -73,6 +73,12 @@
     // rosters three quarterbacks or a second kicker. RB and WR are left to CAPS.
     SIM_ROSTER_LIMITS: { QB: 2, TE: 2, K: 1, DEF: 1 },
 
+    // Extra starting slots granted to RB and WR when computing S4, because the
+    // flex is filled from them. HALF a slot each, not one: the league has one flex
+    // per team and RB and WR share it. Giving both a full slot roughly doubled the
+    // deepening and dropped the RB bar past a cliff.
+    FLEX_EXTRA_SLOTS: 0.5,
+
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff
     // schedule in the league. At 0.10, two otherwise identical players differ by
@@ -797,8 +803,13 @@
 
     const baseline = {};
     for (const [pos, slots] of Object.entries(CFG.STARTERS)) {
-      const extra = (pos === 'RB' || pos === 'WR') ? 1 : 0;
-      const n = CFG.TEAMS * (slots + extra);
+      // The flex is SHARED, so RB and WR get half a slot each, not one apiece.
+      // A full extra slot to both added 2 x TEAMS spots when the league has only
+      // TEAMS flex places — roughly double what the flex justifies. Live, that put
+      // the RB bar on the 42nd back at 115.85, past a cliff where three players
+      // cost twenty points, against 138.60 at the 35th.
+      const extra = (pos === 'RB' || pos === 'WR') ? CFG.FLEX_EXTRA_SLOTS : 0;
+      const n = Math.round(CFG.TEAMS * (slots + extra));
       const list = (byPos[pos] || []).sort((a, b) => b - a);
       if (!list.length) continue;
       baseline[pos] = list[Math.min(n, list.length) - 1];

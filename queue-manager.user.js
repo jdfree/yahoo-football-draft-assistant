@@ -399,6 +399,7 @@
       (state.teamRosters[drafter] = state.teamRosters[drafter] || [])
         .push(Object.assign({}, player, full ? { proj: full.proj } : {}));
       state.pickDrafter[overall] = drafter;       // raw, independent of league size
+      state.pickPos[overall] = player.pos;        // for scoring predicted attrition
       state.slotNames[slotOfPick(overall)] = drafter;
       state.taken.add(key(player.name, player.pos));
     }
@@ -667,6 +668,8 @@
     lastReconciledRound: null,  // reorder once per round of floors, not per pick
     floors: new Map(),      // target pick -> floors; bench reads the deepest
     realised: [],           // {target, round, from, predicted, actual, err} per horizon reached
+    pickPos: {},            // overall pick -> position, for scoring attrition
+    floorMeta: new Map(),   // target -> {from, goneByPos} so predictions can be graded
     lastFillTurn: null,     // our pick number the last full rebuild was run for
     lastProjApplied: null,  // the projection whose floors the queue order reflects
     removals: {},           // "NAME|POS" -> times YOU have taken him out
@@ -1194,6 +1197,7 @@
     // Keep every horizon we have computed, keyed by the pick it reached. Bench
     // valuation reads the deepest of them.
     state.floors.set(sim.target, byPos);
+    state.floorMeta.set(sim.target, { from: currentPick, goneByPos, round: rd });
     const shown = Object.entries(byPos)
       .map(([pos, l]) => `${pos} ${l.length ? l[0].proj : '-'}`).join(', ');
     // Label with the round the horizon is anchored to — the round of the pick we
@@ -2319,8 +2323,9 @@
 
   /** The self-scoring record: every horizon reached, predicted against actual. */
   window.__floorScore = () => state.realised.map((r) => ({
-    fromRound: Math.ceil(r.scoredAt / CFG.TEAMS), targetRound: r.round, target: r.target,
-    lateBy: r.lateBy, err: r.err, predicted: r.predicted, actual: r.actual,
+    span: `${r.from}-${r.target}`, targetRound: r.round, lateBy: r.lateBy,
+    floorErr: r.err, mixPredicted: r.predictedMix, mixActual: r.actualMix, mixErr: r.mixErr,
+    predicted: r.predicted, actual: r.actual,
   }));
 
   window.__queueDump = () => {
@@ -2613,16 +2618,37 @@
         predicted[pos] = pv; actual[pos] = av;
         err[pos] = (pv != null && av != null) ? +(av - pv).toFixed(1) : null;
       }
+      // How the predicted POSITIONAL BREAKDOWN compares with what was really
+      // taken over the same span of picks. The floors are only as good as this.
+      const meta = state.floorMeta.get(target) || {};
+      const actualMix = {};
+      if (meta.from != null) {
+        for (const [overall, pos] of Object.entries(state.pickPos)) {
+          const n = +overall;
+          if (n >= meta.from && n < target) actualMix[pos] = (actualMix[pos] || 0) + 1;
+        }
+      }
+      const mixErr = {};
+      for (const pos of ['QB', 'RB', 'WR', 'TE', 'K', 'DEF']) {
+        const pv = (meta.goneByPos || {})[pos] || 0;
+        const av = actualMix[pos] || 0;
+        if (pv || av) mixErr[pos] = av - pv;
+      }
+
       state.realised.push({
         target, round: Math.ceil(target / CFG.TEAMS),
         scoredAt: here, lateBy: here - target,
+        from: meta.from ?? null,
         predicted, actual, err,
+        predictedMix: meta.goneByPos || {}, actualMix, mixErr,
       });
       const line = Object.entries(err)
         .filter(([, v]) => v !== null)
         .map(([pos, v]) => `${pos} ${v > 0 ? '+' : ''}${v}`).join(', ');
+      const mixLine = Object.entries(mixErr)
+        .map(([pos, v]) => `${pos} ${v > 0 ? '+' : ''}${v}`).join(', ');
       say(`scored R${Math.ceil(target / CFG.TEAMS)} horizon (pick ${target}, ` +
-          `${here - target} late): ${line}`);
+          `${here - target} late): floors ${line} | mix ${mixLine || 'exact'}`);
     }
   }
 

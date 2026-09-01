@@ -1827,7 +1827,7 @@
    *
    * Entries the human added are never touched and never counted as out of place.
    */
-  async function reconcileQueue() {
+  async function reconcileQueue(allowReorder) {
     const plan = planQueue(CFG.QUEUE_SIZE, []);
     if (!plan.length) return 0;
     const planKeys = plan.map((p) => key(p.name, p.pos));
@@ -1846,7 +1846,7 @@
     // The churn is far more disruptive than the imperfect order it fixes.
     let doomedList = ours.filter((pl) => !keep.has(key(pl.name, pl.pos)));
     let good = ours.length - doomedList.length;
-    if (CFG.ENFORCE_QUEUE_ORDER) {
+    if (CFG.ENFORCE_QUEUE_ORDER && allowReorder) {
       good = 0;
       while (good < ours.length && good < planKeys.length
              && key(ours[good].name, ours[good].pos) === planKeys[good]) good++;
@@ -2200,16 +2200,22 @@
       // The rebuild is a diff: whatever still earns its place stays put.
       if (weDrafted) state.lastRoster = rc;
 
-      // Reorder ONLY when a new round of floors lands, or when our own pick has
-      // changed what we need. Reconciling on every tick re-plans against a board
-      // that shifts with each pick, which is thrashy and rarely changes the
-      // answer — the floors are what actually move the ranking, and they are
-      // recomputed once per draft round.
+      // Two different jobs, on two different clocks.
+      //
+      // MEMBERSHIP — dropping entries the ranking no longer justifies — is checked
+      // every cycle. It costs nothing when the queue is right, and gating it by
+      // round left plainly wrong entries stuck: a defense worth +3.5 and a kicker
+      // worth +2.1 sat in the queue with backs and receivers worth 19 to 50
+      // unqueued, and nothing could remove them until the next round.
+      //
+      // ORDER is rewritten only when a new round of floors lands, or right after
+      // our own pick. Yahoo has no reorder primitive, so resequencing means
+      // removing and re-adding; doing that against a board that shifts with every
+      // pick is pure thrash, and the floors are what actually move the ranking.
       const projRound = state.proj ? state.proj.round : null;
-      if (weDrafted || projRound !== state.lastReconciledRound) {
-        state.lastReconciledRound = projRound;
-        await reconcileQueue();
-      }
+      const mayReorder = weDrafted || projRound !== state.lastReconciledRound;
+      if (mayReorder) state.lastReconciledRound = projRound;
+      await reconcileQueue(mayReorder);
 
       // Flag the overlay while we click around the queue UI, so the human knows to
       // keep hands off rather than fighting us for the mouse.

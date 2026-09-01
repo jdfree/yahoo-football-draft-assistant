@@ -1199,10 +1199,17 @@
    * a bench player can wait, so the honest question for him is what is left at the
    * far end, not at our next pick.
    */
-  async function ensureProjection(currentPick) {
+  async function ensureProjection(currentPick, force) {
     if (!state.baseline) return null;
     const away = picksUntilOurTurn(currentPick);
-    if (away > CFG.PROJECT_AT_PICKS_AWAY) return state.proj;
+    // Refresh near our turn — but there must ALWAYS be floors to value against.
+    // Deferring the first projection until three picks out left the opening of the
+    // draft with none, so valuation fell back to the ADP survival model: the very
+    // model this replaced, and the one that prices kickers against the end of the
+    // draft and hands the best of them an enormous surplus. Kickers went straight
+    // to the top of the queue.
+    if (!force && state.proj && away > CFG.PROJECT_AT_PICKS_AWAY) return state.proj;
+    if (!force && !state.proj && away > CFG.PROJECT_AT_PICKS_AWAY && state.floors.size) return state.proj;
     const turn = ourNextPickAfter(currentPick);
     if (state.proj && state.proj.turn === turn && state.proj.teams === CFG.TEAMS) return state.proj;
     const rd = roundNow();
@@ -2342,7 +2349,11 @@
         if (!state.baselinePending && !state.teamsConfirmed) {
           say('baseline: league size not confirmed yet — waiting rather than fixing it wrong');
         }
-        if (!state.baselinePending && state.teamsConfirmed) computeBaseline();
+        if (!state.baselinePending && state.teamsConfirmed) {
+          computeBaseline();
+          // Seed the floors immediately, so nothing is ever valued without them.
+          await ensureProjection(draftPosition().overall, true);
+        }
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;
         state.armed = true;
@@ -2355,7 +2366,10 @@
       }
       if (!state.baselinePending && !state.baselineDone) {
         syncLeagueShape();
-        if (state.teamsConfirmed) computeBaseline();   // the one and only computation
+        if (state.teamsConfirmed) {
+          computeBaseline();                           // the one and only computation
+          await ensureProjection(draftPosition().overall, true);
+        }
       }
 
       observeShape();                        // narrow league size from the header
@@ -2407,6 +2421,10 @@
 
       // Projects only when close to our turn; a no-op otherwise.
       await ensureProjection(here);
+
+      // Nothing is queued before the first projection exists. Ranking without
+      // floors falls back to the ADP model, which misprices kickers badly.
+      if (!state.proj) { state.working = false; renderOverlay(); return; }
 
       if (weDrafted) state.lastRoster = rc;
 

@@ -52,7 +52,7 @@ in one live draft purely because thirty-five players had been drafted in between
 | **O12** | Tie-break | Ties go to running back. | — |
 | **O13** | Roster caps | A team will not exceed `CAPS[pos]` at any position. | `CAPS` |
 | **O16** | K/DEF timing | Opponents consider a kicker or defense only in the last `SIM_KDEF_LAST_ROUNDS` rounds — anchored to the final two picks of a roster. Behavioural, and deliberately overriding the arithmetic. | `SIM_KDEF_LAST_ROUNDS: 2` |
-| **O15** | Roster limits | How many of a position one team will ever carry: QB 2, TE 2, K 1, DEF 1. RB and WR are left to `CAPS`. A roster that already exceeds a limit through real picks simply takes nothing more there. | `SIM_ROSTER_LIMITS` |
+| **O15** | Roster limits | How many of a position one team will ever carry: QB 2, **TE 1**, K 1, DEF 1. RB and WR are left to `CAPS`. TE is one because drafters eschew a second tight end rather than roster a replacement-level one — the arithmetic disagrees, since a 120-point tight end against a reserve bar of 84.56 scores +35, and the model duly predicted 17 tight ends in 30 picks. A roster already over a limit through real picks simply takes nothing more there. | `SIM_ROSTER_LIMITS` |
 | **O14** | Output | Per position, a ladder of up to **12** surviving players in projection order. The head of each ladder is that position's **floor**. Every horizon computed is retained, keyed by target pick. | — |
 
 **Where this landed.** The model now produces a plausible draft shape: RB/WR through
@@ -179,7 +179,7 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `WEIGHT_FLEX` | 0.9 | V5b |
 | `WEIGHT_RESERVE` | 0.2 | V5c |
 | `BENCH_RB_WR_MULTIPLIER` | 2 | V6 (ours only) |
-| `SIM_ROSTER_LIMITS` | QB2 TE2 K1 DEF1 | O15 |
+| `SIM_ROSTER_LIMITS` | QB2 TE1 K1 DEF1 | O15 |
 | `SIM_KDEF_LAST_ROUNDS` | 2 | O16 |
 | `PROJECT_AT_PICKS_AWAY` | 3 | O1 |
 | `SAME_TEAM_PENALTY` | 0 | V7 |

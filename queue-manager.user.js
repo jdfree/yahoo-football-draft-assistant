@@ -71,7 +71,12 @@
 
     // O15 — how many of a position the simulation lets one team carry. Nobody
     // rosters three quarterbacks or a second kicker. RB and WR are left to CAPS.
-    SIM_ROSTER_LIMITS: { QB: 2, TE: 2, K: 1, DEF: 1 },
+    // TE is 1, not 2: drafters eschew a second tight end rather than roster a
+    // replacement-level one. The arithmetic disagrees — against a reserve bar of
+    // 84.56 a 120-point tight end scores +35 — and the model duly predicted 17
+    // tight ends in 30 picks. Nobody drafts like that. QB keeps 2, where a genuine
+    // backup market exists.
+    SIM_ROSTER_LIMITS: { QB: 2, TE: 1, K: 1, DEF: 1 },
 
 
     // O16 — how many rounds from the end an opponent will consider a kicker or a

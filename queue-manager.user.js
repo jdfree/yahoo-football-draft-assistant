@@ -46,9 +46,19 @@
     // How much a player is worth by the role he would fill. Raising RESERVE
     // relative to STARTER buys the best remaining player at a contested position
     // instead of plugging an empty starting slot with someone mediocre.
+    //
+    // The ratio is what matters: at RESERVE 0.35 a bench player must be worth
+    // roughly three times a starter's surplus to outrank him. At 0.2 he needed
+    // five times, which was too harsh in practice — a kicker worth +7.6 outranked
+    // a running back worth +35.5, and a defense worth +3.3 outranked a back worth
+    // +80. A kicker's surplus is the gap between the best kicker and a replacement
+    // one, which is close to worthless; a large surplus at running back is not.
+    //
+    // It is still a discount, and deliberately so: a mediocre bench player at +8
+    // scores 2.8 and still loses to a marginal starting need at +3.
     WEIGHT_STARTER: 1.0,
     WEIGHT_FLEX: 0.9,
-    WEIGHT_RESERVE: 0.2,
+    WEIGHT_RESERVE: 0.35,
 
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff

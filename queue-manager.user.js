@@ -47,18 +47,24 @@
     // relative to STARTER buys the best remaining player at a contested position
     // instead of plugging an empty starting slot with someone mediocre.
     //
-    // The ratio is what matters: at RESERVE 0.35 a bench player must be worth
-    // roughly three times a starter's surplus to outrank him. At 0.2 he needed
-    // five times, which was too harsh in practice — a kicker worth +7.6 outranked
-    // a running back worth +35.5, and a defense worth +3.3 outranked a back worth
-    // +80. A kicker's surplus is the gap between the best kicker and a replacement
-    // one, which is close to worthless; a large surplus at running back is not.
+    // The ratio is what matters: at RESERVE 0.25 a bench player must be worth four
+    // times a starter's surplus to outrank him. That figure is pinned by four
+    // cases observed live, which bound it from both sides:
     //
-    // It is still a discount, and deliberately so: a mediocre bench player at +8
-    // scores 2.8 and still loses to a marginal starting need at +3.
+    //   RB +35.5 bench must beat K +7.58 starter     -> needs > 0.214
+    //   RB +80  bench must beat DEF +3.3 starter     -> needs > 0.041
+    //   K +7.58 starter must beat QB +24 bench       -> needs < 0.316
+    //   WR +3   starter must beat RB +8 bench        -> needs < 0.375
+    //
+    // So anything in 0.25-0.30 satisfies all four; 0.20 fails the first and 0.35
+    // fails the third. The asymmetry is real rather than arbitrary: a kicker's
+    // surplus is the gap between the best kicker and a replacement one, worth
+    // little in points, while a large surplus at running back is worth a lot — but
+    // a backup quarterback behind an established starter is worth almost nothing
+    // however large his nominal surplus.
     WEIGHT_STARTER: 1.0,
     WEIGHT_FLEX: 0.9,
-    WEIGHT_RESERVE: 0.35,
+    WEIGHT_RESERVE: 0.25,
 
     // --- 3. fantasy playoffs ------------------------------------------------
     // PLAYOFF_SWING is the TOTAL spread between the easiest and hardest playoff

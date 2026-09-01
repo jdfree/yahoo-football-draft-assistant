@@ -488,6 +488,7 @@
     const mustSwitch = !/^Picks$/i.test(was);
     if (mustSwitch) { t.picks.click(); await sleep(450); }
     recordPicks();                       // per-team rosters, for pick projection
+    syncLeagueShape();                   // and re-check league size from them
     const n = foldPicks();
     if (mustSwitch && t.queue) { t.queue.click(); await sleep(250); }
     if (n) say(`picks panel: +${n} new (${state.taken.size} drafted overall)`);
@@ -818,6 +819,33 @@
   // ---------------------------------------------------------------------------
   // Valuation — same model as the autodraft script
   // ---------------------------------------------------------------------------
+
+  /**
+   * League size and our slot are DISCOVERED, not configured. Setting TEAMS by hand
+   * is silent corruption waiting to happen: a 12 in a 14-team room throws off every
+   * slot mapping, mis-attributes every pick to the wrong team, and poisons the whole
+   * projection — with nothing in the output that looks obviously wrong.
+   *
+   * Slot comes from the draft-room URL, which is authoritative. Team count comes
+   * from the number of distinct drafters in the picks feed, trusted once we have
+   * seen at least that many picks.
+   */
+  function detectSlot() {
+    const m = location.pathname.match(/draftclient\/f1\/\d+\/(\d+)/);
+    return m ? +m[1] : CFG.SLOT;
+  }
+  function detectTeams() {
+    const names = Object.keys(state.teamRosters || {});
+    const seen = state.seenPickNos ? state.seenPickNos.size : 0;
+    if (names.length > 1 && seen >= names.length) return names.length;
+    return CFG.TEAMS;
+  }
+  function syncLeagueShape() {
+    const slot = detectSlot();
+    const teams = detectTeams();
+    if (slot !== CFG.SLOT) { say(`slot detected as ${slot} (config said ${CFG.SLOT})`); CFG.SLOT = slot; }
+    if (teams !== CFG.TEAMS) { say(`league size detected as ${teams} (config said ${CFG.TEAMS})`); CFG.TEAMS = teams; }
+  }
 
   const gapTo = (rd) => (rd % 2 === 1 ? 2 * (CFG.TEAMS - CFG.SLOT) + 1 : 2 * CFG.SLOT - 1);
   const roundNow = () => {
@@ -1591,6 +1619,7 @@
         await readPool();
         if (!state.pool.size) { say('pool came back empty — not arming, will retry'); return; }
         loadOurs();
+        syncLeagueShape();               // slot from the URL, before anything uses it
         computeBaseline();               // once, from the full pool
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;

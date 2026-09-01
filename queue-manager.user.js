@@ -122,13 +122,6 @@
     // It matters because Yahoo drafts the TOP of the queue when your clock expires.
     ENFORCE_QUEUE_ORDER: true,
 
-    // How many rounds ahead the projection looks. Deciding in round 10 is measured
-    // against the board expected at our round-12 pick. Two is the point at which a
-    // position can realistically be stripped: comparing against our very next pick
-    // understates the cost of passing, because we rarely come back to a position
-    // one pick later.
-    HORIZON_ROUNDS: 2,
-
     // How close to our turn the projection is run, in picks. Running it late means
     // it sees the picks that just happened, so a run on a position is priced in
     // rather than averaged away by a projection taken at the top of the round.
@@ -139,20 +132,6 @@
     // because he was drafted a moment before the feed caught up — so a single
     // removal is never treated as a verdict.
     VETO_AFTER: 3,
-
-    // --- replacement horizon -------------------------------------------------
-    // How many rounds to assume a position goes undrafted if you pass on it now.
-    // Comparing against "what could I get one pick later" understates the cost of
-    // skipping: you rarely come back to a position on your very next pick. At 2,
-    // replacement level is what would survive two full rounds of attrition.
-    SKIP_ROUNDS: 2,
-
-    // How much ADP scatters, in picks. A hard cutoff treats ADP as a promise —
-    // "ADP 130 will definitely last to pick 129" — when it is only an average.
-    // The top-projected player at a position is precisely who a value-drafter
-    // reaches for, so he is far likelier to go early than his ADP suggests.
-    // Larger values assume more randomness in the room.
-    ADP_SIGMA: 12,
 
     // --- backup depth at RB/WR ----------------------------------------------
     // How much to inflate an RB's or WR's PROJECTION when he is being valued as a
@@ -873,28 +852,11 @@
   }
 
   /**
-   * The "subsequent pick": the one AFTER our next pick, unless our next two are
-   * consecutive, in which case it is the one after that pair. This is the horizon
-   * over which a position can realistically be stripped.
-   *
-   * It is anchored to the pick we are ABOUT TO MAKE, not to whatever pick the room
-   * happens to be on. Deciding anywhere in round 10 looks to our round-12 pick;
-   * deciding in round 1 looks to round 3.
-   *
-   * Anchoring to the room's current pick made the answer depend on WHEN in the
-   * round it was computed. While another team was picking in round 10,
-   * ourNextPickAfter returned our own round-10 pick as "next" and the horizon came
-   * out a round short at round 11; recomputed after our pick it gave round 12. The
-   * shorter horizon understates how far a position gets stripped, and running backs
-   * suffer most — a QB once topped the round-1 queue on a 28-point edge measured
-   * against round 2, while the backs' real cost against round 3 went unmeasured.
+   * Our Nth pick from here: n=1 is the pick in hand, n=3 the third-from-next.
+   * Clamped to the last pick of the draft — unclamped, the closing rounds targeted
+   * picks that do not exist (216 in a 210-pick draft) and the simulation removed
+   * players for picks nobody ever makes, depressing those floors.
    */
-  /** Our pick in a given round, in a snake. */
-  function ourPickInRound(round) {
-    const T = CFG.TEAMS;
-    return (round % 2 === 1) ? (round - 1) * T + CFG.SLOT : round * T - CFG.SLOT + 1;
-  }
-  /** Our Nth pick from here: n=1 is the pick in hand, n=3 the third-from-next. */
   function ourPickAhead(currentPick, n) {
     let p = ourNextPickAfter(currentPick);
     for (let i = 1; i < n; i++) p = ourNextPickAfter(p + 1);
@@ -903,16 +865,6 @@
 
   /** How many picks — ours included — until we are on the clock. */
   const picksUntilOurTurn = (currentPick) => ourNextPickAfter(currentPick) - currentPick;
-
-  function subsequentPick(currentPick) {
-    const imminent = ourNextPickAfter(currentPick);      // the pick in hand
-    const round = Math.ceil(imminent / CFG.TEAMS);
-    // Never look past the end of the draft. Unclamped, the last rounds targeted
-    // picks that do not exist — 216 in a 210-pick draft — and the simulation then
-    // removed players for picks nobody ever makes, depressing those floors.
-    const lastPick = CFG.TEAMS * rosterSize();
-    return Math.min(ourPickInRound(round + CFG.HORIZON_ROUNDS), lastPick);
-  }
 
   /** Starting slots a roster still has open, as positions a pick could fill. */
   function openSlots(roster) {
@@ -988,7 +940,7 @@
    */
   async function projectAvailability(currentPick, targetPick) {
     if (!state.baseline) return null;
-    const target = targetPick || subsequentPick(currentPick);
+    const target = targetPick;
     const mine = new Set(roster().map((r) => key(r.name, r.pos)));
 
     // Everyone still on the board, best first.
@@ -1381,12 +1333,6 @@
     // Where we are in the draft, for turning ADP into a survival probability.
     const currentPick = draftPosition().overall;
 
-    // How many picks pass before we would realistically come back to a position.
-    // Summing gapTo over successive rounds handles the snake: from any pick to the
-    // same slot two rounds later is exactly 2 x TEAMS.
-    let horizon = 0;
-    for (let i = 0; i < Math.max(1, CFG.SKIP_ROUNDS); i++) horizon += gapTo(rd + i);
-
     // Predict WHO goes by ADP, and drop exactly those players. The previous model
     // counted departures by ADP and then removed that many from the TOP of the
     // projection list, as though the players taken were the highest-projected —
@@ -1404,12 +1350,6 @@
     withAdp.forEach((p) => effAdp.set(p.id, p.adp));
     noAdp.forEach((p, i) => effAdp.set(p.id, lastReal + 1 + i));
 
-    /**
-     * Probability a player is still on the board when we next consider his
-     * position. ADP is a mean, not a guarantee, so this is a logistic curve
-     * around the horizon rather than a step function: a player whose ADP sits
-     * exactly at the horizon is a coin flip, not a certainty either way.
-     */
     // The current projection, whatever turn it was computed for. It used to be
     // discarded unless its round matched the room's — a leftover from when it was
     // recomputed per round. Now that it is refreshed per TURN, that test went false
@@ -1418,12 +1358,7 @@
     // +71.7 and led the queue.
     const projected = state.proj || null;
 
-    const deadline = currentPick + horizon;
     // Our final pick of the draft, used for kickers and defenses.
-    const survivesBy = (p, by) => {
-      const a = effAdp.get(p.id) ?? by;
-      return 1 / (1 + Math.exp((by - a) / Math.max(1, CFG.ADP_SIGMA)));
-    };
 
     /**
      * Replacement level differs by position.
@@ -1524,19 +1459,12 @@
         const survivor = projected.byPos[pos].find((p) => p.id !== exceptId);
         if (survivor) return survivor.proj;
       }
-      // Fallback while the simulation has no opinion — a position it never
-      // reached. One deadline for everyone.
-      const by = deadline;
-      let remaining = 1;          // chance everyone better has already gone
-      let expected = 0;
-      for (const p of l) {
-        const sv = survivesBy(p, by);
-        expected += p.proj * remaining * sv;
-        remaining *= (1 - sv);
-        if (remaining < 0.01) break;
-      }
-      // Whatever probability is left over means nobody useful survives.
-      return expected + remaining * l[l.length - 1].proj;
+      // Fallback for a position the simulation never reached — it holds no
+      // survivors there, so assume nobody at it gets drafted and the best man left
+      // is still the best man left. This replaces an ADP survival model that is no
+      // longer reachable in normal play: floors are seeded before anything is
+      // valued, so the branch above answers every real case.
+      return l[0].proj;
     };
 
     const flexUsed = ['RB', 'WR', 'TE']

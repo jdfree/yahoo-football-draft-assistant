@@ -164,8 +164,11 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `LATE_ONLY` | *(empty)* | our own K/DEF gate, off — the math decides |
 | `AUTOPICK_AT_SECONDS` | 0 | last-second safety pick, off |
 
-`HORIZON_ROUNDS`, `SKIP_ROUNDS` and `ADP_SIGMA` survive only as fallbacks for the
-pre-projection ADP model and are unused while floors exist.
+There are no other knobs. `HORIZON_ROUNDS`, `SKIP_ROUNDS` and `ADP_SIGMA` are
+gone, along with the ADP survival model they fed: floors are seeded before
+anything is valued, so that path was unreachable. When the simulation holds no
+survivors at a position — a position it never reached — the bar falls back to the
+best player still available there.
 
 ---
 

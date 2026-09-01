@@ -47,7 +47,7 @@ in one live draft purely because thirty-five players had been drafted in between
 | **O7** | *(retired)* | No bench mode. With O5 gone there is no starter/bench distinction to fall back from. | — |
 | **O8** | Bye limit | A team will not take a third player at one position sharing a bye week. | — |
 | **O9** | Score | `surplus = projection − S4[position]`, against the **static** baseline. The rolling bar is retired: taking the previous projection's floor as the next bar fed the model its own output, and errors compounded — a position the model over-drafted saw its floor fall, which made it score higher next time, which drafted it harder still. TE floors ran 162 → 143 → 135 → 124 → 104 → 77 that way, and one projection took 15 tight ends in 36 picks. | `S4` |
-| **O10** | RB/WR multiplier, inverting below zero | A positive surplus is **multiplied**, a negative one **divided**. At a multiplier of 2 a back at −5 competes as −2.5, so he is taken once the lineup is otherwise full and nothing else beats that. Multiplying a negative pushed exactly the players the rule exists to favour to the bottom. | `BENCH_RB_WR_MULTIPLIER: 2` |
+| **O10** | *(retired)* | No RB/WR multiplier in the opponent model. The deepened baseline (S4 gives those positions one extra slot) already expresses "backs and receivers go earlier than their lineup count suggests"; applying a multiplier on top double-counted it — a back scored 248 against a tight end's 71 and the model took all 39 of the first three rounds' picks at RB and WR. `BENCH_RB_WR_MULTIPLIER` still governs **V6** on our side, where a real starter/bench distinction exists. | — |
 | **O11** | *(retired)* | There is no floor on the score. Clamping negatives to `+1` made every candidate below the bar exactly equal, so O12 stopped breaking ties and made the entire decision — 24 of 30 late picks went to running back, and with the rolling bar of O9 whole rounds went to a single position. A pick still happens: the best of several negative scores is still the best. | — |
 | **O12** | Tie-break | Ties go to running back. | — |
 | **O13** | Roster caps | A team will not exceed `CAPS[pos]` at any position. | `CAPS` |
@@ -160,7 +160,7 @@ across a reload. Q7 is the one signal of intent that is reliable.
 | `WEIGHT_STARTER` | 1.0 | V5a |
 | `WEIGHT_FLEX` | 0.9 | V5b |
 | `WEIGHT_RESERVE` | 0.2 | V5c |
-| `BENCH_RB_WR_MULTIPLIER` | 2 | V6 **and** O10 |
+| `BENCH_RB_WR_MULTIPLIER` | 2 | V6 |
 | `SIM_ROSTER_LIMITS` | QB2 TE2 K1 DEF1 | O15 |
 | `PROJECT_AT_PICKS_AWAY` | 3 | O1 |
 | `SAME_TEAM_PENALTY` | 0 | V7 |
@@ -217,6 +217,10 @@ Two horizons from one draft, for reference — too few to conclude anything:
 - **The O10 change is unmeasured.** Offline simulation cannot evaluate it: O10 is
   gated on bench mode, which depends on team rosters, and a synthetic harness has
   none. Only a live mock will show whether it moves the predicted mix.
+- **Rounds 1–3 are still entirely RB/WR in simulation.** Dropping O10 moved QB a
+  round earlier and TE two, but the opening rounds remain 100% backs and
+  receivers, where reality is closer to 90% with the occasional elite tight end.
+  The deepened RB baseline may be too aggressive.
 - **Where, not whether.** The two samples above disagree on QB and TE (+23.8 then
   +6.2; +17.9 then +6.7) and are confounded by measurement lag. Only WR looks
   consistent so far, at about −8 both times. Several drafts of clean at-target

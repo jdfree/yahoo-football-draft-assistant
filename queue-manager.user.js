@@ -869,19 +869,16 @@
       if (byeBlocked(p)) continue;
       if (held(p.pos) >= limit(p.pos)) continue;
 
-      const surplus = p.proj - (base[p.pos] ?? p.proj);
-
-      // The RB/WR multiplier INVERTS below zero: a positive surplus is multiplied,
-      // a negative one is divided. Depth at those positions is worth reaching for
-      // when it is genuinely good, and worth tolerating when it is not — at a
-      // multiplier of 2, a back at -5 competes as -2.5, so he is taken once the
-      // lineup is otherwise full and nothing else beats that. Multiplying a
-      // negative instead pushed exactly the players the rule exists to favour to
-      // the bottom of the board.
-      const m = CFG.BENCH_RB_WR_MULTIPLIER;
-      const score = (p.pos === 'RB' || p.pos === 'WR')
-        ? (surplus >= 0 ? surplus * m : surplus / m)
-        : surplus;
+      // Plain surplus. No RB/WR multiplier here — the deepened baseline (S4 gives
+      // those positions one extra slot, because the flex is filled from them)
+      // already expresses "backs and receivers go earlier than their lineup count
+      // suggests". Applying the multiplier on top double-counted the same idea: a
+      // back scored 248 against a tight end's 71, and the model took all 39 of the
+      // first three rounds' picks at RB and WR.
+      //
+      // BENCH_RB_WR_MULTIPLIER still governs OUR valuation (V6), where there is a
+      // real starter/bench distinction for it to act on.
+      const score = p.proj - (base[p.pos] ?? p.proj);
 
       // Ties go to running back.
       if (score > bestScore || (score === bestScore && p.pos === 'RB' && best && best.pos !== 'RB')) {

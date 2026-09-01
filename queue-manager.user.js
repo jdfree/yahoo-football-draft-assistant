@@ -1371,6 +1371,26 @@
    * them through, every slot in a five-deep queue is scored against the SAME
    * roster — which queued five kickers for a one-kicker roster slot.
    */
+    /**
+   * The best player still on the board at each position, right now.
+   *
+   * A floor claims "this good a player will still be there later". The pool only
+   * ever shrinks, so that claim is refuted the moment the board falls below it —
+   * and it does: a projection made at pick 74 promised a 173.46 receiver at pick
+   * 126, while the best on the board at pick 111 was already 139.09. Between our
+   * turns at slot 14 there are 27 picks, so a stale floor can stand for fifty.
+   */
+  function bestAvailableNow() {
+    const mine = new Set(roster().map((r) => key(r.name, r.pos)));
+    const best = {};
+    for (const p of state.pool.values()) {
+      const k = key(p.name, p.pos);
+      if (state.taken.has(k) || mine.has(k)) continue;
+      if (best[p.pos] === undefined || p.proj > best[p.pos]) best[p.pos] = p.proj;
+    }
+    return best;
+  }
+
   function rankAvailable(extra) {
     const have = roster().concat(extra || []);
     const planned = new Set((extra || []).map((e) => e.id));
@@ -1471,25 +1491,7 @@
      * `exceptId` matters: a player is never his own fallback. Reusing one
      * replacement per position made the best available player score zero surplus.
      */
-    /**
-   * The best player still on the board at each position, right now.
-   *
-   * A floor claims "this good a player will still be there later". The pool only
-   * ever shrinks, so that claim is refuted the moment the board falls below it —
-   * and it does: a projection made at pick 74 promised a 173.46 receiver at pick
-   * 126, while the best on the board at pick 111 was already 139.09. Between our
-   * turns at slot 14 there are 27 picks, so a stale floor can stand for fifty.
-   */
-  function bestAvailableNow() {
-    const mine = new Set(roster().map((r) => key(r.name, r.pos)));
-    const best = {};
-    for (const p of state.pool.values()) {
-      const k = key(p.name, p.pos);
-      if (state.taken.has(k) || mine.has(k)) continue;
-      if (best[p.pos] === undefined || p.proj > best[p.pos]) best[p.pos] = p.proj;
-    }
-    return best;
-  }
+
 
     // Computed once per ranking: the best player still on the board at each
     // position. V13 clamps every bar to it, so no bar can promise more than the

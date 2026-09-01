@@ -1385,12 +1385,16 @@
      * around the horizon rather than a step function: a player whose ADP sits
      * exactly at the horizon is a coin flip, not a certainty either way.
      */
-    // Read the round's projection; ensureProjection computes it, off this path.
-    const projected = state.proj && state.proj.round === roundNow() ? state.proj : null;
+    // The current projection, whatever turn it was computed for. It used to be
+    // discarded unless its round matched the room's — a leftover from when it was
+    // recomputed per round. Now that it is refreshed per TURN, that test went false
+    // the moment the room advanced a round, and every position silently fell back
+    // to the ADP model: kickers priced against the end of the draft came out at
+    // +71.7 and led the queue.
+    const projected = state.proj || null;
 
     const deadline = currentPick + horizon;
     // Our final pick of the draft, used for kickers and defenses.
-    const endDeadline = currentPick + Math.max(1, size - have.length) * CFG.TEAMS;
     const survivesBy = (p, by) => {
       const a = effAdp.get(p.id) ?? by;
       return 1 / (1 + Math.exp((by - a) / Math.max(1, CFG.ADP_SIGMA)));
@@ -1448,13 +1452,12 @@
     const replacement = (pos, exceptId, role) => {
       const l = byPos[pos].filter((p) => p.id !== exceptId);   // sorted by projection
       if (!l.length) return 0;
-      // Kickers and defenses are measured against the END of the draft, not the
-      // next couple of rounds — the real choice is "one now" versus "one with the
-      // last pick". They use the SAME probabilistic machinery so everything stays
-      // on one scale; only the deadline differs. Leaving them on a fixed
-      // "twelve deep" rule while skill positions moved to expected replacement
-      // made K and DEF look far worse than they are.
-      // Preferred: what the simulation says is still there at our subsequent pick.
+      // Every position is treated alike: the baseline and the projected floors
+      // apply to kickers and defenses exactly as they do to running backs. They
+      // used to be measured against the END of the draft instead, on the argument
+      // that the real choice is "one now versus one with my last pick" — but that
+      // put them on a different scale to everything else and made their surplus
+      // impossible to compare with a skill player's.
       if (role === 'reserve') {
         const deep = deepestFloors();
         const survivor = deep && deep[pos] && deep[pos].find((p) => p.id !== exceptId);
@@ -1479,9 +1482,9 @@
           return Math.max(survivor.proj, floorBeneath);
         }
       }
-      // Fallback while the simulation has no opinion (no baseline yet, or a
-      // position it never reached): the ADP survival model.
-      const by = (pos === 'K' || pos === 'DEF') ? endDeadline : deadline;
+      // Fallback while the simulation has no opinion — a position it never
+      // reached. One deadline for everyone.
+      const by = deadline;
       let remaining = 1;          // chance everyone better has already gone
       let expected = 0;
       for (const p of l) {

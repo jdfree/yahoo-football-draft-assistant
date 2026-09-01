@@ -693,7 +693,15 @@
    * position. Computed once from the full pool and frozen — it describes the
    * league's shape, not who happens to be undrafted.
    */
+  /**
+   * The worst-starter baseline is computed ONCE and never recomputed. It describes
+   * the league's shape — how good a startable player is at each position — which is
+   * a fact about the roster rules and the team count, not about who is still on the
+   * board. Recomputing it against a depleting pool walks it steadily downward and
+   * silently reprices every pick.
+   */
   function computeBaseline() {
+    if (state.baselineDone) return state.baseline;
     // Snapshot the pool the FIRST time we compute, and always use that snapshot.
     // The baseline describes the league's shape and must not drift: recomputing
     // from the live pool after picks have happened walks it steadily downward,
@@ -731,7 +739,8 @@
     const baseline = {};
     for (const [pos, list] of Object.entries(starters)) baseline[pos] = Math.min(...list);
     state.baseline = baseline;
-    say(`baseline (worst starter): ${JSON.stringify(baseline)}`);
+    state.baselineDone = true;
+    say(`baseline (worst starter, fixed for the draft): ${JSON.stringify(baseline)}`);
 
     // Self-check. A corrupt pool does not make the baseline throw, it just makes it
     // quietly wrong — a duplicated pool once put RB at 151 instead of 108 and
@@ -823,7 +832,7 @@
    * Play the draft forward from the last completed pick to our subsequent pick,
    * and report the best projection expected to survive at each position.
    */
-  function projectAvailability(currentPick) {
+  async function projectAvailability(currentPick) {
     if (!state.baseline) return null;
     const target = subsequentPick(currentPick);
     const mine = new Set(roster().map((r) => key(r.name, r.pos)));
@@ -853,6 +862,7 @@
       if (!choice) continue;
       gone.add(choice.id);
       rost.push(choice);
+      await Promise.resolve();      // yield between picks; see ensureProjection
     }
 
     const expected = {};
@@ -874,15 +884,43 @@
    * slot mapping, mis-attributes every pick to the wrong team, and poisons the whole
    * projection — with nothing in the output that looks obviously wrong.
    *
-   * Slot comes from the draft-room URL, which is authoritative. Team count comes
-   * from the number of distinct drafters in the picks feed, trusted once we have
-   * seen at least that many picks.
+   * Both come from the room's own list of OUR picks, which reads
+   * "Round 1, Pick 7 (7th Overall) / Round 2, Pick 8 (22nd Overall) / ...". It is
+   * rendered before the draft starts, so the shape is known at arm time and never
+   * has to be revised later — which matters, because the baseline is computed once
+   * and a league size corrected afterwards would invalidate it.
+   *
+   * Round 1's pick number is the slot. For a snake, round 1 and round 2 overalls
+   * sum to 2T + 1, so T = (o1 + o2 - 1) / 2 — here (7 + 22 - 1) / 2 = 14.
    */
   function detectSlot() {
     const m = location.pathname.match(/draftclient\/f1\/\d+\/(\d+)/);
     return m ? +m[1] : CFG.SLOT;
   }
+  /** Our pick schedule as [{round, pick, overall}], in round order. */
+  function pickSchedule() {
+    const out = [];
+    const re = /Round\s+(\d+),\s*Pick\s+(\d+)\s*\((\d+)(?:st|nd|rd|th)\s+Overall\)/gi;
+    for (const m of document.body.innerText.matchAll(re)) {
+      out.push({ round: +m[1], pick: +m[2], overall: +m[3] });
+    }
+    return out.sort((a, b) => a.round - b.round);
+  }
   function detectTeams() {
+    const sched = pickSchedule();
+    const r1 = sched.find((x) => x.round === 1);
+    const r2 = sched.find((x) => x.round === 2);
+    if (r1 && r2) {
+      const t = (r1.overall + r2.overall - 1) / 2;
+      if (Number.isInteger(t) && t >= 2 && t <= 32) {
+        // Cross-check against round 3 when it is there: overall(r3) = 2T + slot.
+        const r3 = sched.find((x) => x.round === 3);
+        if (!r3 || r3.overall === 2 * t + r1.pick) return t;
+        say(`league size: schedule disagrees with itself (r3 ${r3.overall} vs ${2 * t + r1.pick})`);
+      }
+    }
+    // Fallback: distinct drafters in the picks feed, trusted once we have seen at
+    // least that many picks. Only reachable if the schedule list is not rendered.
     const names = Object.keys(state.teamRosters || {});
     const seen = state.seenPickNos ? state.seenPickNos.size : 0;
     if (names.length > 1 && seen >= names.length) return names.length;
@@ -902,16 +940,66 @@
       for (const [overall, who] of Object.entries(state.pickDrafter || {})) {
         state.slotNames[slotOfPick(+overall)] = who;
       }
-      state.baseline = null;      // baseline depends on team count too
-      computeBaseline();
+      if (state.baselineDone) {
+        // Should not happen: the shape comes from the pick schedule, which is up
+        // before the draft starts, so it is known before the baseline is computed.
+        say('WARNING league size changed after the baseline was fixed — it is now wrong');
+      }
     }
   }
 
+  /**
+   * The projection, run once per round and cached.
+   *
+   * It answers one question per position — what will still be there at our
+   * subsequent pick — and that answer does not meaningfully change between two
+   * picks in the same round, so recomputing it per candidate was pure waste. It
+   * used to run inside rankAvailable, which planQueue calls once per queue slot:
+   * eight full simulations of up to thirty picks over a five-hundred-player pool
+   * for a single refill, all synchronous. That is what froze the tab.
+   *
+   * Two survivors are kept per position rather than one, so a player is never
+   * measured against himself — the bug that made the top receiver at a position
+   * score zero surplus and concluded that passing on him would leave him there.
+   */
+  async function ensureProjection(currentPick) {
+    const rd = roundNow();
+    if (state.proj && state.proj.round === rd && state.proj.teams === CFG.TEAMS) return state.proj;
+    if (!state.baseline) return null;
+    const sim = await projectAvailability(currentPick);
+    if (!sim) return null;
+    const byPos = {};
+    for (const [pos, list] of Object.entries(sim.expected)) {
+      byPos[pos] = list.slice(0, 2).map((p) => ({ id: p.id, proj: p.proj }));
+    }
+    state.proj = { round: rd, teams: CFG.TEAMS, target: sim.target, byPos };
+    const shown = Object.entries(byPos)
+      .map(([pos, l]) => `${pos} ${l.length ? l[0].proj : '-'}`).join(', ');
+    say(`projection for round ${rd} (to pick ${sim.target}): ${shown}`);
+    return state.proj;
+  }
+
   const gapTo = (rd) => (rd % 2 === 1 ? 2 * (CFG.TEAMS - CFG.SLOT) + 1 : 2 * CFG.SLOT - 1);
-  const roundNow = () => {
-    const m = document.body.innerText.match(/Round\s*(\d+),\s*Pick\s*(\d+)/i);
-    return m ? +m[1] : 1;
-  };
+  /**
+   * Where the draft actually is, as {round, overall}.
+   *
+   * Yahoo writes two different things in the same shape. The header reads
+   * "ROUND 11, PICK 147", where the pick is the OVERALL pick. Our own pick
+   * schedule reads "Round 2, Pick 8 (22nd Overall)", where it is the pick within
+   * the round. A regex that matches both takes whichever comes first in the DOM,
+   * which would silently report round 1 pick 7 in the middle of round 11. The
+   * trailing "(...)" is what separates them.
+   */
+  const POSITION_RE = /Round\s*(\d+),\s*Pick\s*(\d+)(\s*\(\s*\d+(?:st|nd|rd|th)\s+Overall\s*\))?/gi;
+  function draftPosition(text) {
+    for (const m of (text ?? document.body.innerText).matchAll(POSITION_RE)) {
+      if (!m[3]) return { round: +m[1], overall: +m[2] };   // header form, no "(Nth Overall)"
+    }
+    // No header: fall back to counting what has been drafted.
+    const drafted = state.taken ? state.taken.size : 0;
+    return { round: Math.floor(drafted / CFG.TEAMS) + 1, overall: drafted + 1 };
+  }
+  const roundNow = () => draftPosition().round;
 
   /** Per-team playoff modifier from team-context.gen.js; 1.0 when absent. */
   function playoffModifier(team) {
@@ -994,8 +1082,7 @@
     }
 
     // Where we are in the draft, for turning ADP into a survival probability.
-    const pickMatch = document.body.innerText.match(/Round\s*\d+,\s*Pick\s*(\d+)/i);
-    const currentPick = pickMatch ? +pickMatch[1] : (rd - 1) * CFG.TEAMS + CFG.SLOT;
+    const currentPick = draftPosition().overall;
 
     // How many picks pass before we would realistically come back to a position.
     // Summing gapTo over successive rounds handles the snake: from any pick to the
@@ -1026,8 +1113,8 @@
      * around the horizon rather than a step function: a player whose ADP sits
      * exactly at the horizon is a coin flip, not a certainty either way.
      */
-    // Play the draft forward and see what actually survives (PROJECTION.md).
-    const projected = projectAvailability(currentPick);
+    // Read the round's projection; ensureProjection computes it, off this path.
+    const projected = state.proj && state.proj.round === roundNow() ? state.proj : null;
 
     const deadline = currentPick + horizon;
     // Our final pick of the draft, used for kickers and defenses.
@@ -1076,8 +1163,8 @@
       // "twelve deep" rule while skill positions moved to expected replacement
       // made K and DEF look far worse than they are.
       // Preferred: what the simulation says is still there at our subsequent pick.
-      if (projected && projected.expected[pos]) {
-        const survivor = projected.expected[pos].find((p) => p.id !== exceptId);
+      if (projected && projected.byPos[pos]) {
+        const survivor = projected.byPos[pos].find((p) => p.id !== exceptId);
         if (survivor) return survivor.proj;
       }
       // Fallback while the simulation has no opinion (no baseline yet, or a
@@ -1741,11 +1828,13 @@
         loadOurs();
         syncLeagueShape();               // slot from the URL, before anything uses it
         // If the drafted read had to be deferred — it clicks around the player
-        // table, so it never runs during your turn — the baseline must be deferred
-        // with it. Computing now would freeze a value derived from a pool missing
-        // every drafted player, which is the exact error the read exists to fix.
+        // table, so it never runs during your turn — the baseline waits with it.
+        // Computing now would fix a value derived from a pool missing every
+        // drafted player, which is the exact error the read exists to fix, and the
+        // baseline is computed once so there would be no second chance. Until it
+        // lands, ranking falls back to the ADP survival model.
         state.baselinePending = !(await readDraftedForBaseline());
-        computeBaseline();               // provisional if pending, refined below
+        if (!state.baselinePending) computeBaseline();
         state.initialByPos = Object.assign({}, availableByPos());
         state.lastRoster = roster().length;
         state.armed = true;
@@ -1755,8 +1844,7 @@
       if (state.baselinePending && !myTurn()) {
         if (await readDraftedForBaseline()) {
           state.baselinePending = false;
-          state.baselinePool = null;         // discard the provisional snapshot
-          computeBaseline();
+          computeBaseline();                 // the one and only computation
         }
       }
 
@@ -1779,6 +1867,12 @@
 
       // Only disturb the tabs when we are actually about to rebuild the queue.
       if (weDrafted || short) await syncPicksFromPanel();
+
+      // Refresh the round's projection before anything reads it. Once per round is
+      // enough — what survives to our subsequent pick does not meaningfully change
+      // between two picks of the same round — and it runs here, once, rather than
+      // inside the ranking that planQueue calls for every queue slot.
+      await ensureProjection(draftPosition().overall);
 
       // Our own pick invalidates the queue's premise: the roster changed, so
       // every queued player was chosen against needs that no longer hold.

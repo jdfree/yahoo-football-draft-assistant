@@ -15,7 +15,15 @@ produce that number.
 
 Establish what a *starting-calibre* player looks like at each position. This is a
 property of the league's shape, not of who happens to be undrafted, so it is
-computed once and frozen.
+computed once and frozen. Literally once: the function returns early ever after.
+
+That makes league size and slot something the assistant must know **before** it
+computes, not something it can correct later. Both come from the room's own list
+of our picks — `Round 1, Pick 7 (7th Overall) / Round 2, Pick 8 (22nd Overall)` —
+which is rendered before the draft starts. Round 1's pick number is the slot, and
+round 1 and round 2 overalls sum to `2T + 1`, so `T = (7 + 22 - 1) / 2 = 14`.
+Counting distinct drafters in the picks feed remains a fallback, but it cannot
+work before anyone has picked.
 
 Inputs: the roster slots (e.g. QB, WR, WR, RB, RB, TE, W/R/T, K, DEF) and the
 number of teams. Flex (`W/R/T`) means RB, WR or TE.
@@ -64,7 +72,18 @@ a mismatch is logged.
 
 ## 2. Predicting the picks between now and our subsequent pick
 
-Run before each queue repopulation.
+**Run once per round, asynchronously, and cached.** The output is one number per
+position — the best projection expected to still be there at our subsequent pick
+— and that does not meaningfully change between two picks of the same round.
+
+This matters for more than tidiness. The simulation used to run inside the
+ranking, and `planQueue` calls the ranking once per queue slot: eight full
+simulations of up to thirty picks over a five-hundred-player pool for a single
+refill, all synchronous. That froze the tab.
+
+Two survivors are cached per position rather than one, so a player is never
+measured against himself — the bug that had the top receiver score zero surplus,
+the model concluding that passing on him would leave him available.
 
 ### Which picks to simulate
 

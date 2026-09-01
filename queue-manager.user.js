@@ -687,6 +687,7 @@
     lastReconciledRound: null,  // reorder once per round of floors, not per pick
     floors: new Map(),      // target pick -> floors; bench reads the deepest
     lastFillTurn: null,     // our pick number the last full rebuild was run for
+    lastProjApplied: null,  // the projection whose floors the queue order reflects
     removals: {},           // "NAME|POS" -> times YOU have taken him out
     pendingRemoval: new Set(),  // suspected removals, confirmed on the next pass
     vetoed: new Set(),      // struck out after VETO_AFTER removals; never re-queued
@@ -2541,7 +2542,8 @@
       const needProjection = away <= CFG.PROJECT_AT_PICKS_AWAY
         && (!state.proj || state.proj.turn !== turn);
 
-      if (!weDrafted && !dueForRebuild && !needProjection && queueFull) {
+      if (!weDrafted && !dueForRebuild && !needProjection && queueFull
+          && !(state.proj && state.proj.turn !== state.lastProjApplied)) {
         state.working = false;
         renderOverlay();
         return;                                  // settled: touch nothing
@@ -2558,6 +2560,14 @@
       // Projects only when close to our turn; a no-op otherwise.
       await ensureProjection(here);
 
+      // New floors reprice EVERY queued player, not just the ones we might add, so
+      // a fresh projection is itself a reason to recompute the queue and reorder
+      // it. Without this the queue kept an order derived from floors that had
+      // since been replaced — the values on screen were current while the sequence
+      // was not.
+      const freshFloors = state.proj && state.proj.turn !== state.lastProjApplied;
+      if (freshFloors) state.lastProjApplied = state.proj.turn;
+
       // Nothing is queued before the first projection exists. Ranking without
       // floors falls back to the ADP model, which misprices kickers badly.
       if (!state.proj) { state.working = false; renderOverlay(); return; }
@@ -2571,7 +2581,9 @@
         state.lastFillTurn = turn;
         say(`rebuild window: ${away} picks until pick ${turn}`);
       }
-      await reconcileQueue(dueForRebuild);
+      // A full recompute — membership and order — when the rebuild window opens or
+      // when new floors land, since either invalidates the queue's ordering.
+      await reconcileQueue(dueForRebuild || freshFloors);
 
       // Flag the overlay while we click around the queue UI, so the human knows to
       // keep hands off rather than fighting us for the mouse.

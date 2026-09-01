@@ -2034,39 +2034,45 @@
       doomedList = ours.slice(good);
     }
     const wrong = doomedList;
-    if (!wrong.length) return 0;                  // nothing outranked: touch nothing
-    const doomed = new Set(wrong.map((pl) => key(pl.name, pl.pos)));
+    const present0 = new Set(current.map((pl) => key(pl.name, pl.pos)));
+    const missing = plan.filter((pl) => !present0.has(key(pl.name, pl.pos)));
+    if (!wrong.length && !missing.length) return 0;   // nothing to do; touch nothing
 
     /**
-     * Swap one at a time: remove a single entry, put its replacement in, then move
-     * on. Removing everything first and refilling afterwards left the queue nearly
-     * empty for as long as the rebuild took — a live round-2 rebuild was still
-     * running when the round-3 pick arrived, and the queue had almost nothing in
-     * it at exactly the moment it mattered. At worst this is one slot short for a
-     * moment.
+     * ADD FIRST, remove second.
+     *
+     * A rebuild can be cut short at any moment — the drafters ahead of us may be
+     * autodrafting in a couple of seconds each — and whatever is in the queue when
+     * our clock starts is what we have. Removing first spends that scarce time
+     * making the queue WORSE: a live round-1 pick arrived with only three players
+     * queued, because the rebuild was still clearing bad entries and had not got to
+     * the additions. Adding first means an interruption leaves us with more good
+     * players, never fewer.
+     *
+     * The queue briefly exceeds QUEUE_SIZE while both halves run. That is the point
+     * of the trade, and the removals bring it back.
      */
-    let swapped = 0;
+    let added = 0, removed = 0;
+    for (const p of missing) {
+      if (myTurn()) { say('your turn started — stopping reconciliation'); break; }
+      if (await toggleQueue(p, true)) {
+        state.queue.push(p);
+        state.ours.add(key(p.name, p.pos));
+        saveOurs();
+        added++;
+      }
+    }
     for (const victim of wrong) {
       if (myTurn()) { say('your turn started — stopping reconciliation'); break; }
       const vKey = key(victim.name, victim.pos);
       const gone = await removeFromQueue((pl) => !isHuman(pl) && key(pl.name, pl.pos) === vKey);
-      if (!gone.length) continue;
-      swapped++;
-      const present = new Set(queueView().filter(Boolean).map((pl) => key(pl.name, pl.pos)));
-      const add = plan.find((pl) => !present.has(key(pl.name, pl.pos)));
-      if (add && await toggleQueue(add, true)) {
-        state.queue.push(add);
-        state.ours.add(key(add.name, add.pos));
-        saveOurs();
-      }
+      if (gone.length) removed++;
     }
-    if (swapped) {
-      const why = wrong.filter((pl) => !keep.has(key(pl.name, pl.pos))).length;
-      say(`reconciled: swapped ${swapped} (${why} outranked, ${swapped - why} out of order),` +
-          ` kept ${good}`);
+    if (added || removed) {
+      say(`reconciled: added ${added}, removed ${removed}, kept ${good}`);
     }
     await clearFilters();
-    return swapped;
+    return added + removed;
   }
 
   /** Available (undrafted, unrostered) count per position. */

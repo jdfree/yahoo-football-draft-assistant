@@ -1967,18 +1967,20 @@
    * rest of the queue is still useful.
    */
   const positionLimit = (pos) => {
-    // K and DEF get two slots — a pick and a FALLBACK. There is exactly one of
-    // each worth having at any moment, so if ours is sniped between the rebuild
-    // and our clock, one slot leaves nothing behind him but negative surplus.
+    // Caps scale with the queue rather than sitting just under it. At
+    // QUEUE_SIZE - 2 a single position could take 8 of 10 slots, which defeats
+    // the point of the cap: the queue is supposed to keep offering a genuine
+    // alternative when a run empties one position. Live it reached 6 of 8.
     //
-    // This used to collapse to 1 on back-to-back picks, to stop a turn spending
-    // both of them on kickers. Q10 already prevents that where it actually
-    // happens — at the draft click, by position, verified live — so the cap was a
-    // second lock on a door already held, and the only thing it really did was
-    // strip the fallback out of every turn-slot queue. Round 13 at a turn slot:
-    // top kicker queued, no kicker behind him, everyone below him negative.
-    if (pos === 'K' || pos === 'DEF') return 2;
-    return Math.max(1, CFG.QUEUE_SIZE - 2);
+    // Half the queue for skill positions, a quarter for K and DEF. Neither
+    // depends on back-to-back picks: Q10 prevents a doubled position at the draft
+    // click, by position, and collapsing the K/DEF cap on a pair only stripped
+    // the fallback out of every turn-slot queue — leaving nothing behind a kicker
+    // sniped between the rebuild and our clock.
+    //
+    // At QUEUE_SIZE 10 that is 5 skill and 2 K/DEF; at 8, 4 and 2.
+    const share = (pos === 'K' || pos === 'DEF') ? 4 : 2;
+    return Math.max(1, Math.floor(CFG.QUEUE_SIZE / share));
   };
 
   function planQueue(n, seed = null) {

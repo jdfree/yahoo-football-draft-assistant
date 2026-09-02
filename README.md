@@ -181,6 +181,7 @@ valuation is in [ALGORITHM.md](ALGORITHM.md), where each factor is labelled
 | `FAILED: ... Failed to fetch` | `serve.py` isn't running, or it's on another port. |
 | `no strategy loaded` | `strategy.js` didn't load. The loader fetches it before the manager; check the server is serving the whole directory. |
 | Chrome asks for local-network permission | Expected on first load; allow it. To avoid it entirely, host the files on any public HTTPS origin and set `window.YS_BASE` to that URL. |
+| The fetch hangs forever with no error | The browser is blocking the request to localhost rather than refusing it. **Brave** does this by default — open Shields for the Yahoo tab and allow localhost requests. Verify the server itself is fine with `curl http://localhost:8765/strategy.js` from a terminal; if that works, it is the browser, not `serve.py`. |
 | `no team context — playoff modifier will be 1.0` | `team-context.gen.js` wasn't served. Harmless; the playoff factor just goes flat. |
 | Nothing queues | Still in `DRY_RUN`. The log says which mode it's in. |
 | Queue stays empty on your first turn | It was loaded too late — it will not edit the queue during your own clock. |

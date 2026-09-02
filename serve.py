@@ -6,7 +6,7 @@
 Chrome treats http://localhost as a trustworthy origin, so an HTTPS page can
 fetch from it. CORS headers are sent because the draft page is a foreign origin.
 """
-import http.server, socketserver, os, sys
+import http.server, socketserver, os, sys, threading
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -22,8 +22,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer(('127.0.0.1', PORT), Handler) as httpd:
+# Threaded, not the plain TCPServer. A single-threaded server handles one request
+# at a time, so a browser holding a connection open wedges it completely: the
+# draft page then hangs on fetch instead of loading the assistant, mid-draft.
+class Server(socketserver.ThreadingTCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+with Server(('127.0.0.1', PORT), Handler) as httpd:
     print(f'serving {os.getcwd()} on http://localhost:{PORT}')
     print('bookmarklet:')
     print(f"javascript:(function(){{var s=document.createElement('script');"

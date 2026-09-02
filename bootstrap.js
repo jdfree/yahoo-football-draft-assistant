@@ -18,13 +18,15 @@
 
   if (window.__queueStop) { window.__queueStop(); log('stopped previous instance'); }
 
+  // Only the safety switches are set here. Slot and league size are DETECTED —
+  // the slot from the draft-room URL and the team count from the draft-order
+  // strip — and detection overrides config, so there is nothing to fill in.
+  // Everything else keeps the defaults in queue-manager.user.js; setting them
+  // here silently overrode that file, which is how the queue ran at 5 for a
+  // while after the default became 10.
   window.YS_CONFIG = Object.assign({
-    SLOT: 1,               // your ACTUAL slot — check the waiting room
-    TEAMS: 12,
-    QUEUE_SIZE: 5,
-    DRY_RUN: true,         // flip to false once a dry run reads clean
+    DRY_RUN: true,         // logs its intentions and touches nothing
     AUTOPICK_AT_SECONDS: 0,
-    SHOW_OVERLAY: true,
   }, window.YS_CONFIG || {});
 
   const get = async (path) => {
@@ -39,7 +41,7 @@
     catch (e) { log('no team context (' + e.message + ') — playoff modifier will be 1.0'); }
 
     (0, eval)(await get('queue-manager.user.js'));
-    log(`armed — slot ${window.YS_CONFIG.SLOT}, ${window.YS_CONFIG.DRY_RUN ? 'DRY RUN' : 'LIVE'}`);
+    log(`loaded — ${window.YS_CONFIG.DRY_RUN ? 'DRY RUN' : 'LIVE'}; slot and league size are detected from the room`);
   } catch (e) {
     log('FAILED: ' + e.message);
     log(`is the server running?  cd yahoo-football-draft-assistant && python3 serve.py`);

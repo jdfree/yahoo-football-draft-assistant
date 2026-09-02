@@ -902,7 +902,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Pick projection (see PROJECTION.md)
+  // Pick projection (see ALGORITHM.md section B)
   // ---------------------------------------------------------------------------
 
   /** Positions a flex slot accepts. */

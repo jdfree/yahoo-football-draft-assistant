@@ -116,6 +116,12 @@
     // The projected-floors strip across the bottom of the centre table. Every
     // valuation rests on these numbers, so they are worth having on screen.
     SHOW_FLOORS: true,
+    // Surplus value printed under each queued player, plus the playoff-schedule
+    // delta beside it. annotateQueue() has always guarded on this key, but the key
+    // itself was never defined anywhere in the file — so it read `undefined`, the
+    // guard returned on the function's first line every time it ran, and the
+    // numbers never once appeared in the queue.
+    ANNOTATE_QUEUE: true,
     // Distance from the right edge, used only if the roster panel cannot be
     // measured. Normally the overlay auto-positions just left of your roster.
 

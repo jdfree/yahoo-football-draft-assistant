@@ -832,6 +832,7 @@
     slotNames: {},          // draft slot -> drafter name, learned from round one
     seenPickNos: new Set(), // overall pick numbers already recorded
     pickDrafter: {},        // overall pick -> drafter, kept raw so slots can be rebuilt
+    misses: new Map(),      // player key -> consecutive failed row lookups
   };
 
   const key = (name, pos) => `${name.replace(/\s+/g, ' ').trim().toUpperCase()}|${pos}`;
@@ -2098,15 +2099,35 @@
         ok = want ? after > before : after < before;   // trust the badge, not the click
       }
     } else {
-      // No row even after searching means the player is gone from the board —
-      // drafted while our pick tracking had a gap. Mark them unavailable so the
-      // ranking stops offering them; otherwise the refill retries the same three
-      // names every tick and the queue never fills.
+      // No row after searching USUALLY means the player is gone from the board.
+      // But it is an inference, not a fact, and a single transient miss used to
+      // be enough to mark him drafted permanently — the search racing the render,
+      // a filter still applied, a name that did not match. Nothing ever revisited
+      // that verdict, so an available player silently left the pool for good.
+      //
+      // Live: T. McBride was marked drafted at 02:43:13 and dropped from the
+      // queue. He was actually taken at pick 16, by Jonah, TWO MINUTES LATER —
+      // after our pick 15. Believing he was gone, the pair split took the second
+      // best tight end while the best one was still on the board.
+      //
+      // So require the miss to REPEAT before believing it. One miss suppresses
+      // him for this cycle only, which is all that is needed to stop refill
+      // retrying the same names every tick; the second consecutive miss is what
+      // marks him drafted. Finding his row again clears the count.
       if (want) {
-        state.taken.add(key(player.name, player.pos));
-        say(`${player.name} has no row — treating as drafted`);
+        const k = key(player.name, player.pos);
+        const misses = (state.misses.get(k) || 0) + 1;
+        state.misses.set(k, misses);
+        if (misses >= 2) {
+          state.taken.add(k);
+          state.misses.delete(k);
+          say(`${player.name} has no row twice — treating as drafted`);
+        } else {
+          say(`${player.name} has no row — skipping this cycle`);
+        }
       }
     }
+    if (el) state.misses.delete(key(player.name, player.pos));
 
     if (usedSearch) { setSearch(prev); await sleep(500); }
     return ok;

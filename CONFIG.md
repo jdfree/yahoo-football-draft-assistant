@@ -107,6 +107,34 @@ exists only among reserves.
 
 ---
 
+## Swapping the algorithm
+
+`strategy.js` holds the algorithm and nothing else — no DOM, no Yahoo, no
+globals. `queue-manager.user.js` holds everything that talks to the draft room.
+The two meet at four calls:
+
+```js
+window.YS_STRATEGY = {
+  name: 'mine',
+  baselines(players, cfg),          // -> { starter, reserve }  league-shape bars
+  project(ctx, cfg, from, to),      // -> { target, gone, expected, simulated }
+  rank(ctx, cfg, extra),            // -> [player] best first, each with val/sortVal/role
+  plan(ctx, cfg, n, seed),          // -> [player] the queue, as an ordered sequence
+};
+```
+
+Set it before the assistant loads and it replaces the built-in one. Two optional
+methods, `bestAvailable(ctx)` and `positionLimit(cfg, pos)`, feed the floors strip
+and queue pruning; omit them and those features degrade rather than break.
+
+The `ctx` snapshot — pool, taken, roster, floors, baselines, real opponent
+rosters, current pick and round — is documented at the top of `strategy.js`. It is
+built fresh per call and must not be mutated.
+
+`node strategy-smoke.js` runs the algorithm against a synthetic league with
+`document` and `window` trapped, so anything reaching into the draft room fails
+immediately.
+
 ## Inspecting a running draft
 
 | Call | Returns |

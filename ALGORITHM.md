@@ -17,6 +17,12 @@ floors the previous projection produced, so the bar descends with the board.
 The output therefore feeds two places: the floors become **our** bar, and they
 become the **next projection's** bar. S4 survives only to seed the first run.
 
+**Where this lives.** All of it is in `strategy.js`, which touches no DOM and no
+globals: it receives a snapshot of the board and returns decisions.
+`queue-manager.user.js` owns every interaction with Yahoo and calls the strategy
+through four methods. Either side can be replaced without the other changing. See
+CONFIG.md for the interface.
+
 ---
 
 ## A. Setup — once per draft

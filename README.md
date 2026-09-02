@@ -132,6 +132,29 @@ breaks it.
 
 ---
 
+## Swapping the algorithm
+
+The repo is split so the algorithm and the draft-room plumbing can change
+independently:
+
+| File | Owns |
+| --- | --- |
+| `strategy.js` | The algorithm. Valuation, opponent projection, queue planning. Touches no DOM and reads no globals — it receives a snapshot and returns decisions. |
+| `queue-manager.user.js` | Everything Yahoo. Reading the board, clicking, dragging, tab state, timing, the overlay. |
+
+To run your own logic, define `window.YS_STRATEGY` before the assistant loads and
+implement four methods — `baselines`, `project`, `rank` and `plan`. The interface
+and the full shape of the snapshot are documented at the top of `strategy.js`. The
+manager validates the shape at load and refuses a partial strategy, rather than
+discovering a missing method halfway through a draft.
+
+```bash
+node strategy-smoke.js   # runs the algorithm with no DOM and checks its output
+```
+
+That harness traps `document` and `window`, so it fails immediately if the
+algorithm ever reaches into the draft room.
+
 ## Configuration
 
 Nothing needs setting. To change a default, set `window.YS_CONFIG` before clicking
@@ -156,6 +179,7 @@ valuation is in [ALGORITHM.md](ALGORITHM.md), where each factor is labelled
 | Symptom | Cause |
 | --- | --- |
 | `FAILED: ... Failed to fetch` | `serve.py` isn't running, or it's on another port. |
+| `no strategy loaded` | `strategy.js` didn't load. The loader fetches it before the manager; check the server is serving the whole directory. |
 | Chrome asks for local-network permission | Expected on first load; allow it. To avoid it entirely, host the files on any public HTTPS origin and set `window.YS_BASE` to that URL. |
 | `no team context — playoff modifier will be 1.0` | `team-context.gen.js` wasn't served. Harmless; the playoff factor just goes flat. |
 | Nothing queues | Still in `DRY_RUN`. The log says which mode it's in. |

@@ -40,6 +40,9 @@
     try { (0, eval)(await get('team-context.gen.js')); log('team context loaded'); }
     catch (e) { log('no team context (' + e.message + ') — playoff modifier will be 1.0'); }
 
+    // The algorithm loads first: queue-manager.user.js refuses to start without a
+    // strategy, rather than discovering one is missing mid-draft.
+    (0, eval)(await get('strategy.js'));
     (0, eval)(await get('queue-manager.user.js'));
     log(`loaded — ${window.YS_CONFIG.DRY_RUN ? 'DRY RUN' : 'LIVE'}; slot and league size are detected from the room`);
   } catch (e) {

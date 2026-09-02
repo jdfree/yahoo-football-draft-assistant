@@ -464,22 +464,60 @@
    * exactly the window the last-second pick needs. Accept both, and prefer the
    * mm:ss form when both are on screen.
    */
+  /**
+   * Seconds on the draft clock.
+   *
+   * The clock reads "0:50" for most of a turn but drops the colon for the final
+   * ten seconds, and a bare "9" is indistinguishable from any other small number
+   * near the top of the page. Ranking candidates by "colon first, then topmost"
+   * therefore worked all turn and then silently switched to a DIFFERENT element
+   * exactly when it mattered: the draft header carries a bare number ABOVE the
+   * clock, so in the last ten seconds the scan returned that instead, `left` never
+   * reached PAIR_SPLIT_AT_SECONDS, and the pair split armed but never fired.
+   * Live, that put two kickers on the roster with consecutive picks.
+   *
+   * So identify the clock ONCE and keep reading that element. A colon reading is
+   * unambiguous; failing that, the countdown is the element whose value has
+   * DECREASED since the last scan. Nothing else on the page counts down.
+   */
+  let clockEl = null;
+  const clockSeen = new WeakMap();
+
   function secondsLeft() {
+    const parse = (t) => {
+      const mm = /^(\d{1,2}):(\d{2})$/.exec(t);
+      if (mm) return { secs: (+mm[1]) * 60 + (+mm[2]), colon: true };
+      if (/^\d{1,2}$/.test(t)) return { secs: +t, colon: false };
+      return null;
+    };
+
+    // Already know which element is the clock — keep reading it, colon or not.
+    if (clockEl && clockEl.isConnected) {
+      const v = parse((clockEl.textContent || '').trim());
+      if (v && v.secs <= 20 * 60) return v.secs;
+      clockEl = null;                                   // re-rendered; find it again
+    }
+
     const found = [];
     for (const el of document.querySelectorAll('div,span,p,h1,h2,h3,b,strong')) {
       if (el.children.length) continue;                 // leaf nodes only
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.top > 200) continue; // the clock sits at the top
-      const t = (el.textContent || '').trim();
-      let secs = null;
-      const mm = /^(\d{1,2}):(\d{2})$/.exec(t);
-      if (mm) secs = (+mm[1]) * 60 + (+mm[2]);
-      else if (/^\d{1,2}$/.test(t)) secs = +t;          // final ten seconds
-      if (secs === null || secs > 20 * 60) continue;
-      found.push({ secs, top: rect.top, colon: !!mm });
+      const v = parse((el.textContent || '').trim());
+      if (!v || v.secs > 20 * 60) continue;
+      found.push({ secs: v.secs, top: rect.top, colon: v.colon, el });
     }
     if (!found.length) return null;
-    found.sort((a, b) => (b.colon - a.colon) || (a.top - b.top));
+
+    let pick = found.find((f) => f.colon);
+    if (!pick) pick = found.find((f) => {
+      const prev = clockSeen.get(f.el);
+      return prev !== undefined && f.secs < prev;
+    });
+    for (const f of found) clockSeen.set(f.el, f.secs);
+
+    if (pick) { clockEl = pick.el; return pick.secs; }
+    found.sort((a, b) => a.top - b.top);                // nothing pinned down yet
     return found[0].secs;
   }
 
@@ -3021,6 +3059,15 @@
         pairTrace = firstPos;
         say(`back-to-back: already took ${firstPos} this turn — will split at ` +
             `${CFG.PAIR_SPLIT_AT_SECONDS}s`);
+      }
+      // Trace the clock once per second while a split is ARMED. Without this a
+      // split that never fires is indistinguishable from one that fired and found
+      // nothing — draftDifferentPosition logs on every exit path, so silence means
+      // it was never called, but nothing showed WHY. Live, `left` was stuck on a
+      // number that never reached the trigger and there was no way to see it.
+      if (firstPos && !pairTried && watchTrace !== left) {
+        watchTrace = left;
+        say(`pair armed: ${left}s left (split at ${CFG.PAIR_SPLIT_AT_SECONDS})`);
       }
       if (firstPos && !pairTried && left !== null && left <= CFG.PAIR_SPLIT_AT_SECONDS) {
         pairTried = true;

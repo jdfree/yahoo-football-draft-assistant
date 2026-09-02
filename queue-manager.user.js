@@ -2932,7 +2932,20 @@
       if (meta.from != null) {
         for (const [overall, pos] of Object.entries(state.pickPos)) {
           const n = +overall;
-          if (n >= meta.from && n < target) actualMix[pos] = (actualMix[pos] || 0) + 1;
+          if (n < meta.from || n >= target) continue;
+          // OUR OWN picks are not in the forecast, so they must not be in the
+          // actual either. The projection simulates the OPPONENTS between our
+          // turns and deliberately skips us, but actualMix counted every pick in
+          // the window — two of ours per window at a turn slot. The difference
+          // was charged to the model as error: our own defense at pick 126 became
+          // "DEF +1" against a forecast of zero defenses, and our kicker at 155
+          // became "K +1" the same way, both for positions the model had never
+          // claimed anything about.
+          //
+          // Identify our picks by slot, not by the drafter string: "You" comes
+          // from the page and would not survive a localisation or a markup change.
+          if (slotOfPick(n) === CFG.SLOT) continue;
+          actualMix[pos] = (actualMix[pos] || 0) + 1;
         }
       }
       const mixErr = {};

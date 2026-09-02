@@ -228,7 +228,16 @@ delay lands in `lateBy`, which is already reported. Requiring `pickPos` to be
 complete would stall instead, because a player inferred as drafted ("has no row")
 never gets a pick number.
 
-**Every accuracy figure recorded before this fix is unreliable and should be
+The actual mix also excludes **our own picks**. The projection simulates the
+opponents between our turns and deliberately skips us, so counting our picks in
+the actual charged the difference to the model as error — at a turn slot that is
+two picks per window. Our defense at pick 126 was scored as `DEF +1` against a
+forecast of zero defenses, and our kicker at 155 as `K +1`, both for positions
+the model had never claimed anything about. Our picks are identified by **slot**,
+not by the drafter string: `You` comes from the page and would not survive a
+localisation or markup change.
+
+**Every accuracy figure recorded before these fixes is unreliable and should be
 discarded**, including the two reference horizons below.
 Each row keeps the round it was projected from, the round it landed in, and how
 late it was scored, because *where* in the draft a position is mispredicted is

@@ -149,7 +149,7 @@ to a genuine starting need.
 
 | # | Factor | Rule | Config |
 | --- | --- | --- | --- |
-| **Q1** | Rebuild schedule | A full recompute of membership **and** order happens once per turn, `QUEUE_SIZE / 2` picks before we are on the clock — or whenever new floors land (O1), since those reprice every queued player. | `QUEUE_SIZE: 8` |
+| **Q1** | Rebuild schedule | A full recompute of membership **and** order happens once per turn, `QUEUE_SIZE / 2` picks before we are on the clock — or whenever new floors land (O1), since those reprice every queued player. | `QUEUE_SIZE: 10` |
 | **Q2** | Back-to-back | When our next two picks fall inside the same window there is no chance to rebuild between them, so we build once, before the first. | — |
 | **Q3** | Between rebuilds | The queue is left alone entirely, apart from replacing players who have actually been drafted — one out, one in, appended. | — |
 | **Q4** | Delta, add-first | A rebuild adds every missing planned player **before** removing anything, and removes only entries the plan no longer wants. A rebuild can be cut short by our clock, and adding first means an interruption leaves more good players, never fewer. The queue may briefly exceed `QUEUE_SIZE`. | — |
@@ -172,7 +172,7 @@ across a reload. Q7 is the one signal of intent that is reliable.
 
 | Config | Default | Governs |
 | --- | --- | --- |
-| `QUEUE_SIZE` | 8 | Q1, Q6 |
+| `QUEUE_SIZE` | 10 | Q1, Q6 |
 | `STARTERS` | QB1 RB2 WR2 TE1 K1 DEF1 | S4, O5, V1, V11 |
 | `FLEX` | 1 | S4, V1 |
 | `CAPS` | QB2 RB6 WR7 TE3 K1 DEF1 | O13, V12 |

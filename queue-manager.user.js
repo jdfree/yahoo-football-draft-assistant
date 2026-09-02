@@ -40,7 +40,9 @@
     POOL: ['Quarterbacks', 'Running Backs', 'Wide Receivers', 'Tight Ends', 'Kickers', 'Team Defenses'],
 
     // --- 1. queue size -----------------------------------------------------
-    QUEUE_SIZE: 8,
+    // Also sets the rebuild window (QUEUE_SIZE / 2 picks before our turn) and the
+    // per-position cap (QUEUE_SIZE - 2 for skill positions).
+    QUEUE_SIZE: 10,
 
     // --- 2. starters vs reserves -------------------------------------------
     // How much a player is worth by the role he would fill. Raising RESERVE

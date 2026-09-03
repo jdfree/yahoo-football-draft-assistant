@@ -9,7 +9,7 @@ Override anything by setting `window.YS_CONFIG` before loading the assistant; it
 is merged over the `CFG` block in `queue-manager.user.js`.
 
 ```js
-window.YS_CONFIG = { DRY_RUN: false, QUEUE_SIZE: 12 };
+window.YS_CONFIG = { QUEUE_SIZE: 12, DRY_RUN: true };
 ```
 
 ---
@@ -29,7 +29,7 @@ Set them only if you are running somewhere the room does not expose them.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `DRY_RUN` | `true` | Logs every intention and touches nothing. The loader forces this on, so going live is deliberate: `window.YS_CONFIG = { DRY_RUN: false }`. |
+| `DRY_RUN` | `false` | Runs live. Set `true` to log every intention and touch nothing — useful for watching a draft without handing it the queue. |
 | `AUTOPICK_AT_SECONDS` | `0` | Draft the top of the queue with this many seconds left. `0` disables it — Yahoo already drafts your queue top when the clock expires, so this only matters if you want it to happen a moment early. |
 | `PAIR_SPLIT_AT_SECONDS` | `1` | On the second of two back-to-back picks, draft the top queued player at a **different** position from the one just taken (`Q10`). This is the only guard against a turn spending both picks on one position. |
 | `TICK_MS` | `2000` | How often the main loop runs. |

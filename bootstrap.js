@@ -18,16 +18,15 @@
 
   if (window.__queueStop) { window.__queueStop(); log('stopped previous instance'); }
 
-  // Only the safety switches are set here. Slot and league size are DETECTED —
-  // the slot from the draft-room URL and the team count from the draft-order
-  // strip — and detection overrides config, so there is nothing to fill in.
-  // Everything else keeps the defaults in queue-manager.user.js; setting them
-  // here silently overrode that file, which is how the queue ran at 5 for a
-  // while after the default became 10.
-  window.YS_CONFIG = Object.assign({
-    DRY_RUN: true,         // logs its intentions and touches nothing
-    AUTOPICK_AT_SECONDS: 0,
-  }, window.YS_CONFIG || {});
+  // Nothing is forced here. Slot and league size are DETECTED — the slot from the
+  // draft-room URL, the team count from the draft-order strip — and detection
+  // overrides config, so there is nothing to fill in. Everything else keeps the
+  // defaults in queue-manager.user.js; setting values here silently overrode that
+  // file, which is how the queue ran at 5 for a while after the default became 10.
+  //
+  // Set window.YS_CONFIG before loading to override anything, e.g.
+  //   window.YS_CONFIG = { DRY_RUN: true };   // log intentions, touch nothing
+  window.YS_CONFIG = window.YS_CONFIG || {};
 
   const get = async (path) => {
     const r = await fetch(`${BASE}/${path}`, { cache: 'no-store' });
@@ -44,7 +43,7 @@
     // strategy, rather than discovering one is missing mid-draft.
     (0, eval)(await get('strategy.js'));
     (0, eval)(await get('queue-manager.user.js'));
-    log(`loaded — ${window.YS_CONFIG.DRY_RUN ? 'DRY RUN' : 'LIVE'}; slot and league size are detected from the room`);
+    log('loaded — slot and league size are detected from the room');
   } catch (e) {
     log('FAILED: ' + e.message);
     log(`is the server running?  cd yahoo-football-draft-assistant && python3 serve.py`);

@@ -28,54 +28,48 @@ No browser extension. No npm install. No API keys.
 
 ---
 
-## Install
+## Install and run
 
 ```bash
 git clone https://github.com/jdfree/yahoo-football-draft-assistant.git
 cd yahoo-football-draft-assistant
-python3 serve.py
+./start.sh
 ```
 
-That prints the bookmarklet you'll use:
+`start.sh` stops any server left over from a previous draft, starts a new one,
+and prints the one line you need. Stop it with Ctrl-C, or `./start.sh stop`.
+Pass a port if 8765 is taken: `./start.sh 9000`.
+
+Then load it into the draft room. **The bookmark is the easy way** — make it once
+and click it in every draft, with no console and no paste prompt. Create a
+bookmark, name it anything, and paste this as the URL:
 
 ```
-serving /path/to/yahoo-football-draft-assistant on http://localhost:8765
-bookmarklet:
 javascript:(function(){var s=document.createElement('script');s.src='http://localhost:8765/bootstrap.js';document.body.appendChild(s);})()
 ```
 
-Leave it running. Save that line as a bookmark — name it anything, paste the whole
-`javascript:...` string as the URL.
+Open your draft room, wait for the board, click the bookmark.
 
-Pass a different port as an argument if 8765 is taken: `python3 serve.py 9000`.
+Or do the same thing from the console (F12), without the `javascript:` prefix:
 
----
+```js
+var s=document.createElement('script');s.src='http://localhost:8765/bootstrap.js';document.body.appendChild(s);
+```
 
-## Run it against a draft
+Chromium browsers make you type `allow pasting` into the console once before they
+accept a paste, and Brave may additionally ask permission to reach localhost. The
+bookmark avoids the first of those entirely.
 
-1. **Join your draft** and wait for the room to open. The URL will look like
-   `.../draftclient/f1/10429766/14` — the last number is your draft slot.
-2. **Once the board is visible**, click the bookmarklet.
-   No bookmarklet? Open DevTools (F12) → Console, and paste:
-   ```js
-   var s=document.createElement('script');s.src='http://localhost:8765/bootstrap.js';document.body.appendChild(s);
-   ```
-3. **Check the console.** You want these lines:
-   ```
-   [assistant loader] team context loaded
-   [assistant loader] loaded — DRY RUN; slot and league size are detected from the room
-   armed — DRY RUN, target 10, slot 14
-   ```
-4. **Go live.** It starts in dry run, which logs what it *would* queue and touches
-   nothing. When the log reads sensibly, run this in the console and click the
-   bookmarklet again:
-   ```js
-   window.YS_CONFIG = { DRY_RUN: false };
-   ```
+That's the whole setup. **Your slot and league size are read from the room**, so
+there is nothing to configure — the slot comes from the URL and the team count is
+counted off the draft-order strip, and both override anything in the config.
 
-**Your slot and league size are detected, not configured.** The slot comes from
-the URL and the team count is counted off the draft-order strip; both override
-anything in the config. There is nothing to fill in.
+It runs live immediately. To watch it without touching your queue, paste this
+first:
+
+```js
+window.YS_CONFIG={DRY_RUN:true};
+```
 
 Load it as early as you can. It reads the whole player pool once at startup, and
 it will not touch the queue while your own clock is running — so arriving with two
@@ -162,9 +156,9 @@ the bookmarklet — it overrides the `CFG` block in `queue-manager.user.js`:
 
 ```js
 window.YS_CONFIG = {
-  DRY_RUN: false,
   QUEUE_SIZE: 10,           // players to keep queued
   AUTOPICK_AT_SECONDS: 2,   // draft the queue top at 2s left; 0 disables
+  DRY_RUN: true,            // log intentions without touching the queue
 };
 ```
 
@@ -181,9 +175,11 @@ valuation is in [ALGORITHM.md](ALGORITHM.md), where each factor is labelled
 | `FAILED: ... Failed to fetch` | `serve.py` isn't running, or it's on another port. |
 | `no strategy loaded` | `strategy.js` didn't load. The loader fetches it before the manager; check the server is serving the whole directory. |
 | Chrome asks for local-network permission | Expected on first load; allow it. To avoid it entirely, host the files on any public HTTPS origin and set `window.YS_BASE` to that URL. |
-| The fetch hangs forever with no error | The browser is blocking the request to localhost rather than refusing it. **Brave** does this by default — open Shields for the Yahoo tab and allow localhost requests. Verify the server itself is fine with `curl http://localhost:8765/strategy.js` from a terminal; if that works, it is the browser, not `serve.py`. |
+| The console refuses to paste | Chromium browsers require you to type `allow pasting` into the console once, then paste again. Using the bookmark avoids this. |
+| A permission dialog appears on load | Brave asking to reach localhost. Allow it, or open Shields for the Yahoo tab and allow localhost requests. |
+| The fetch hangs forever with no error | The browser is blocking the request to localhost rather than refusing it. Open Shields for the Yahoo tab and allow localhost. Verify the server itself is fine with `curl http://localhost:8765/strategy.js` from a terminal; if that works, it is the browser, not `serve.py`. |
 | `no team context — playoff modifier will be 1.0` | `team-context.gen.js` wasn't served. Harmless; the playoff factor just goes flat. |
-| Nothing queues | Still in `DRY_RUN`. The log says which mode it's in. |
+| Nothing queues | You set `DRY_RUN: true`. The `armed —` log line says which mode it is in. |
 | Queue stays empty on your first turn | It was loaded too late — it will not edit the queue during your own clock. |
 | Wrong slot in the log | It corrects itself from the URL and logs `slot detected as N`. |
 

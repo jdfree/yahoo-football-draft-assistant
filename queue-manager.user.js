@@ -26,7 +26,7 @@
   'use strict';
 
   const CFG = {
-    DRY_RUN: true,        // log intentions without touching the queue
+    DRY_RUN: false,       // true logs intentions without touching the queue
 
     // --- draft shape -------------------------------------------------------
     TEAMS: 12,

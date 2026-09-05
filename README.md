@@ -175,7 +175,8 @@ window.YS_CONFIG = {
 
 Every parameter is listed in [CONFIG.md](CONFIG.md). The reasoning behind the
 valuation is in [ALGORITHM.md](ALGORITHM.md), where each factor is labelled
-(S1–S4, O1–O17, V1–V14, Q1–Q11) so it can be named directly.
+(S1–S4, O1–O17, V1–V14, Q1–Q11) so it can be named directly. Wanted but not built:
+[ENHANCEMENTS.md](ENHANCEMENTS.md).
 
 ---
 

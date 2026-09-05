@@ -19,8 +19,8 @@ league's rules**, so the assistant never has to be told your scoring settings.
 ## Requirements
 
 - **Python 3** — for the local file server. Standard library only.
-- **A Chromium browser** (Chrome, Edge, Brave) — the loader uses a bookmarklet or
-  the DevTools console.
+- **Chrome** (or another Chromium browser, e.g. Edge) — the loader is a bookmark
+  or a line pasted into the DevTools console.
 - **Node 18+** — *optional*, only to refresh the ESPN team data. A generated copy
   ships in the repo, so you can skip this.
 
@@ -41,14 +41,26 @@ and prints the one line you need. Stop it with Ctrl-C, or `./start.sh stop`.
 Pass a port if 8765 is taken: `./start.sh 9000`.
 
 Then load it into the draft room. **The bookmark is the easy way** — make it once
-and click it in every draft, with no console and no paste prompt. Create a
-bookmark, name it anything, and paste this as the URL:
+and click it in every draft.
+
+> **Do not paste this into the address bar.** Chrome strips the `javascript:`
+> prefix and searches for the rest. It only works as a bookmark.
+
+1. Show the bookmarks bar — **⌘⇧B** (**Ctrl+Shift+B** on Windows/Linux).
+2. Right-click an empty spot on the bar and choose **"Add page…"**.
+3. Name it anything, e.g. `Draft assistant`.
+4. Paste this as the **URL**, then save:
 
 ```
 javascript:(function(){var s=document.createElement('script');s.src='http://localhost:8765/bootstrap.js';document.body.appendChild(s);})()
 ```
 
-Open your draft room, wait for the board, click the bookmark.
+If the Add-page dialog strips the prefix as well, save the bookmark with any
+placeholder URL, then right-click it, choose **Edit**, and paste there — the edit
+dialog accepts it.
+
+Now open your draft room, wait for the board, and click the bookmark. **Chrome
+will ask permission to reach localhost — click "Allow".**
 
 Or do the same thing from the console (F12), without the `javascript:` prefix:
 
@@ -56,9 +68,8 @@ Or do the same thing from the console (F12), without the `javascript:` prefix:
 var s=document.createElement('script');s.src='http://localhost:8765/bootstrap.js';document.body.appendChild(s);
 ```
 
-Chromium browsers make you type `allow pasting` into the console once before they
-accept a paste, and Brave may additionally ask permission to reach localhost. The
-bookmark avoids the first of those entirely.
+Chrome makes you type `allow pasting` into the console once before it accepts a
+paste. The bookmark route skips that.
 
 That's the whole setup. **Your slot and league size are read from the room**, so
 there is nothing to configure — the slot comes from the URL and the team count is
@@ -174,10 +185,10 @@ valuation is in [ALGORITHM.md](ALGORITHM.md), where each factor is labelled
 | --- | --- |
 | `FAILED: ... Failed to fetch` | `serve.py` isn't running, or it's on another port. |
 | `no strategy loaded` | `strategy.js` didn't load. The loader fetches it before the manager; check the server is serving the whole directory. |
-| Chrome asks for local-network permission | Expected on first load; allow it. To avoid it entirely, host the files on any public HTTPS origin and set `window.YS_BASE` to that URL. |
-| The console refuses to paste | Chromium browsers require you to type `allow pasting` into the console once, then paste again. Using the bookmark avoids this. |
-| A permission dialog appears on load | Brave asking to reach localhost. Allow it, or open Shields for the Yahoo tab and allow localhost requests. |
-| The fetch hangs forever with no error | The browser is blocking the request to localhost rather than refusing it. Open Shields for the Yahoo tab and allow localhost. Verify the server itself is fine with `curl http://localhost:8765/strategy.js` from a terminal; if that works, it is the browser, not `serve.py`. |
+| A permission dialog appears on load | Chrome asking to reach localhost. Click **Allow** — expected the first time. To avoid it entirely, host the files on any public HTTPS origin and set `window.YS_BASE` to that URL. |
+| The console refuses to paste | Chrome requires you to type `allow pasting` into the console once, then paste again. The bookmark avoids this. |
+| The `javascript:` line becomes a web search | You pasted it into the address bar, which strips the prefix. It only works as a bookmark's URL. |
+| The fetch hangs forever with no error | The browser is blocking the request to localhost rather than refusing it, usually a privacy/shield setting on the Yahoo tab — allow localhost for that site. Check the server itself with `curl http://localhost:8765/strategy.js` from a terminal; if that works, it is the browser, not `serve.py`. |
 | `no team context — playoff modifier will be 1.0` | `team-context.gen.js` wasn't served. Harmless; the playoff factor just goes flat. |
 | Nothing queues | You set `DRY_RUN: true`. The `armed —` log line says which mode it is in. |
 | Queue stays empty on your first turn | It was loaded too late — it will not edit the queue during your own clock. |

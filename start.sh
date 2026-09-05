@@ -40,20 +40,30 @@ cat <<TXT
   Draft assistant — serving on http://localhost:$PORT
   Stop it with Ctrl-C, or ./start.sh stop
 
-  EASIEST — make a bookmark once, click it in every draft. No console, and no
-  "allow pasting" prompt. Create a bookmark and paste this as the URL:
+  EASIEST — make a bookmark once, then click it in every draft.
+
+  This will NOT work if you paste it into the address bar: Chrome strips the
+  "javascript:" prefix and searches for the rest. It has to go in a BOOKMARK.
+
+    1. Show the bookmarks bar:  Cmd-Shift-B  (Ctrl-Shift-B on Windows/Linux)
+    2. Right-click an empty spot on that bar, choose "Add page..."
+    3. Name it anything, e.g.  Draft assistant
+    4. Paste this as the URL, then Save:
 
      javascript:(function(){var s=document.createElement('script');s.src='http://localhost:$PORT/bootstrap.js';document.body.appendChild(s);})()
 
-  Then: open your draft room, wait for the board, click the bookmark.
+    If the Add-page dialog strips the prefix too, save it with any placeholder
+    URL, then right-click the bookmark, choose Edit, and paste there instead.
+
+  Then: open your draft room, wait for the board, click the bookmark, and click
+  "Allow" when Chrome asks for permission to reach localhost.
 
   OR from the console (F12), paste the same thing without the javascript: prefix:
 
      var s=document.createElement('script');s.src='http://localhost:$PORT/bootstrap.js';document.body.appendChild(s);
 
-  Brave and Chrome make you type  allow pasting  into the console once before
-  they accept a paste. Brave may also ask permission to reach localhost — allow
-  it, or open Shields and allow localhost for the Yahoo tab.
+  Chrome makes you type  allow pasting  into the console once before it accepts
+  a paste. The bookmark route skips that.
 
   That is all. It runs live, and your slot and league size are read from the
   room, so there is nothing to configure. It manages the queue and never drafts

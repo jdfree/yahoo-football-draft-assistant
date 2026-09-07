@@ -7,6 +7,48 @@ this depends on, and it is already in place.
 
 ---
 
+## The decision to make first
+
+Everything below falls into one of two projects, and they pull in different
+directions. Worth deciding deliberately — or deliberately forking — rather than
+drifting into both.
+
+**Augment the draft platform's UI.** Better information on the board: surpluses
+on every row, floors, positional runs, opponent needs, tier breaks. The assistant
+already does a little of this with the floors strip and the queue annotations, and
+it is the more immediately satisfying work because you see it every pick.
+
+**Implement strategies.** Valuation, variance, alternative projections, risk
+preferences, an AI in the loop. Invisible next to a nice overlay, and the reason
+the tool produces a different answer from everyone else's.
+
+Three things to weigh.
+
+**Check the paid tier before building any UI.** Yahoo already sells draft
+assistance — the Draft Scout panel, Fantasy Plus, Instant Mock Drafts are all
+visible in the room behind a subscribe wall. Before spending a weekend on a
+feature, find out whether it already ships there. Rebuilding something the
+platform sells is wasted effort twice over: it exists, and their version will not
+break every time they redeploy the room.
+
+**The two have very different maintenance costs.** UI work is coupled to the
+draft room's DOM, which is obfuscated, changes between rooms, and has already
+broken this project repeatedly — the clock scanner, the queue drag handles, the
+picks feed. Strategy work sits behind the `strategy.js` boundary, runs in plain
+Node with no browser, and is testable in a second (`node strategy-smoke.js`). One
+of these accrues debt with every Yahoo deploy; the other does not.
+
+**They are cleanly separable now**, which is what makes forking a real option
+rather than a mess. UI belongs to the adapter, strategy belongs behind the
+interface, and neither needs the other to change.
+
+The honest read: strategy is where this can be better than a paid product, and UI
+is where it is most likely to duplicate one. But a strategy nobody can see the
+output of is hard to trust or tune — so if it is both, the UI work worth doing is
+whatever *explains* the strategy's reasoning, not whatever looks best.
+
+---
+
 ## 1. Other fantasy platforms
 
 Today the assistant only knows Yahoo. Everything platform-specific already lives

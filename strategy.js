@@ -660,7 +660,7 @@
    * five variations on the same decision — if a run empties that position, the
    * rest of the queue is still useful.
    */
-  const positionLimit = (cfg, pos) => {
+  const positionLimit = (cfg, pos, ctx) => {
     // Caps scale with the queue rather than sitting just under it. At
     // QUEUE_SIZE - 2 a single position could take 8 of 10 slots, which defeats
     // the point of the cap: the queue is supposed to keep offering a genuine
@@ -674,7 +674,25 @@
     //
     // At QUEUE_SIZE 10 that is 5 skill and 2 K/DEF; at 8, 4 and 2.
     const share = (pos === 'K' || pos === 'DEF') ? 4 : 2;
-    return Math.max(1, Math.floor(cfg.QUEUE_SIZE / share));
+    const cap = Math.max(1, Math.floor(cfg.QUEUE_SIZE / share));
+    if (!ctx || (pos !== 'K' && pos !== 'DEF')) return cap;
+
+    // EXCEPTION — the last two picks with no kicker (or no defense) at all.
+    //
+    // V11 stops deferring a required position once it no longer fits in the
+    // picks remaining, and from then on the ranking offers ONLY that position.
+    // The cap then contradicts it: the plan wants a queue full of kickers, the
+    // cap allows two, and prune removes the rest. The two rules disagree every
+    // cycle and the queue oscillates.
+    //
+    // The cap exists so a run on one position cannot leave the queue useless.
+    // That reasoning does not apply here — there is nothing else we are allowed
+    // to draft, and a kicker sniped off the top with one pick left has to have
+    // something behind him. So lift it entirely for the position we still need.
+    const held = (ctx.roster || []).filter((r) => r.pos === pos).length;
+    const picksLeft = (ctx.rosterSize || 0) - (ctx.roster || []).length;
+    if (held === 0 && picksLeft > 0 && picksLeft <= 2) return cfg.QUEUE_SIZE;
+    return cap;
   };
 
   function planQueue(ctx, cfg, n, seed = null) {
@@ -714,14 +732,23 @@
       const ranked = rankAvailable(ctx, cfg, [])
         .filter((p) => !chosen.some((c) => c.id === p.id))
         .filter((p) => !p.gated)                       // late-round gate applies here
-        .filter((p) => (posCount[p.pos] || 0) < positionLimit(cfg, p.pos));
+        .filter((p) => (posCount[p.pos] || 0) < positionLimit(cfg, p.pos, ctx));
       if (!ranked.length) break;
       const pick = ranked[0];
       chosen.push(pick);
       posCount[pick.pos] = (posCount[pick.pos] || 0) + 1;
       if (chosen.length === 1 && !queued.length && !b2b && isScarce(cfg, pick.pos, ctx.roster)) {
         const backup = rankAvailable(ctx, cfg, []).find((p) => p.pos === pick.pos && p.id !== pick.id);
-        if (backup && chosen.length < n) chosen.push(backup);
+        // Counted and capped like any other pick. It used to be pushed without
+        // either, so the plan came back one over the limit at a scarce position
+        // — three kickers against a cap of two — and prune, which counts every
+        // row, removed the extra on the next cycle. Plan and prune disagreed by
+        // exactly one, permanently, and the queue oscillated.
+        if (backup && chosen.length < n
+            && (posCount[backup.pos] || 0) < positionLimit(cfg, backup.pos, ctx)) {
+          chosen.push(backup);
+          posCount[backup.pos] = (posCount[backup.pos] || 0) + 1;
+        }
       }
     }
 
@@ -738,9 +765,11 @@
     // implementation rather than a copy in the manager; a custom strategy may
     // omit it and the strip will simply not clamp.
     bestAvailable: bestAvailableNow,
-    // Optional. Q6's per-position queue cap. The manager also enforces it when
-    // pruning, so it is exposed rather than duplicated; omit it and the manager
-    // stops pruning on that rule.
+    // Optional. Q6's per-position queue cap, given (cfg, pos, ctx). The manager
+    // also enforces it when pruning, so it is exposed rather than duplicated;
+    // omit it and the manager stops pruning on that rule. `ctx` is optional and
+    // only affects K and DEF, which uncap in the last two picks when we hold
+    // none of that position.
     positionLimit,
   };
 });

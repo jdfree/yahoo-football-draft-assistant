@@ -123,6 +123,75 @@ const check = (label, cond, detail) => {
   check('offers nobody already rostered',
     plan2.every((p) => !ctx.roster.some((r) => r.id === p.id)));
 
+  console.log('\nlast-picks K/DEF exception');
+  {
+    // A full roster except the kicker, with one pick left: V11 offers only
+    // kickers, so the cap must not fight it.
+    const roster = [];
+    const take = (pos, n) => { let c = 0;
+      for (const p of pool.values()) { if (p.pos === pos && c < n && !roster.includes(p)) { roster.push(p); c++; } } };
+    take('QB', 2); take('RB', 5); take('WR', 5); take('TE', 1); take('DEF', 1);
+    const c2 = { ...ctx, roster, rosterSize: roster.length + 1, taken: new Set(),
+                 pickNo: 170, round: 15, backToBack: false };
+    check('roster is one short with no kicker',
+      c2.rosterSize - c2.roster.length === 1 && !roster.some((r) => r.pos === 'K'));
+
+    check('cap lifts for the position we still need',
+      S.positionLimit(CFG, 'K', c2) > Math.floor(CFG.QUEUE_SIZE / 4),
+      `got ${S.positionLimit(CFG, 'K', c2)}`);
+    check('cap holds for the position we already have',
+      S.positionLimit(CFG, 'DEF', c2) === Math.floor(CFG.QUEUE_SIZE / 4),
+      `got ${S.positionLimit(CFG, 'DEF', c2)}`);
+    check('cap holds for skill positions',
+      S.positionLimit(CFG, 'RB', c2) === Math.floor(CFG.QUEUE_SIZE / 2));
+
+    const ranked2 = S.rank(c2, CFG, []);
+    check('ranking offers only kickers (V11 must-fill)',
+      ranked2.length > 0 && ranked2.every((p) => p.pos === 'K'),
+      ranked2.length ? `saw ${[...new Set(ranked2.map((p) => p.pos))].join(',')}` : 'empty');
+
+    const plan2 = S.plan(c2, CFG, CFG.QUEUE_SIZE, []);
+    const ks = plan2.filter((p) => p.pos === 'K').length;
+    check('plan fills the queue with kickers instead of stalling at the cap',
+      ks > Math.floor(CFG.QUEUE_SIZE / 4), `${ks} kickers in a plan of ${plan2.length}`);
+    check('no duplicates among them', new Set(plan2.map((p) => p.id)).size === plan2.length);
+  }
+
+  console.log('\nplan never exceeds the cap prune enforces');
+  {
+    // The scarce-position backup only fires when the TOP-ranked player is at a
+    // position one short of its cap, which mid-draft is almost never true — a
+    // back leads every realistic board. Force it: clear every skill player off
+    // the board so a kicker ranks first, with plenty of picks left so the
+    // last-two-picks exception is not involved.
+    const taken = new Set();
+    for (const p of pool.values()) if (!['K', 'DEF'].includes(p.pos)) taken.add(key(p.name, p.pos));
+    const roster = []; { let c = 0;
+      for (const p of pool.values()) if (p.pos === 'RB' && c < 3) { roster.push(p); c++; } }
+    const c4 = { ...ctx, roster, rosterSize: 15, taken, pickNo: 90, round: 8, backToBack: false };
+    const plan4 = S.plan(c4, CFG, CFG.QUEUE_SIZE, []);
+    check('a scarce position ranks first, so the backup path runs',
+      plan4.length > 0 && plan4[0].pos === 'K', plan4.length ? plan4[0].pos : 'empty plan');
+    check('the exception is NOT in play here',
+      S.positionLimit(CFG, 'K', c4) === Math.floor(CFG.QUEUE_SIZE / 4));
+    const counts4 = {};
+    for (const p of plan4) counts4[p.pos] = (counts4[p.pos] || 0) + 1;
+    const over = Object.entries(counts4)
+      .filter(([pos, n]) => n > S.positionLimit(CFG, pos, c4))
+      .map(([pos, n]) => `${pos} ${n}>${S.positionLimit(CFG, pos, c4)}`);
+    check('plan and prune agree — no position over its cap',
+      over.length === 0, over.join(', ') || JSON.stringify(counts4));
+  }
+
+  console.log('\ncap is unchanged away from the end of the draft');
+  {
+    const c3 = { ...ctx, roster: [], rosterSize: 15, taken: new Set() };
+    check('K capped normally with a full roster ahead',
+      S.positionLimit(CFG, 'K', c3) === Math.floor(CFG.QUEUE_SIZE / 4));
+    check('K capped normally when ctx is absent',
+      S.positionLimit(CFG, 'K') === Math.floor(CFG.QUEUE_SIZE / 4));
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error('\nTHREW:', e.message); process.exit(1); });

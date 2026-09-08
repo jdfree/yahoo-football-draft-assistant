@@ -987,8 +987,8 @@
   // Q6's cap lives with the algorithm; pruning only enforces it. Infinity when a
   // custom strategy does not define it, so pruning simply stops applying the rule
   // rather than inventing a different one.
-  const positionLimit = (pos) =>
-    (STRATEGY.positionLimit ? STRATEGY.positionLimit(CFG, pos) : Infinity);
+  const positionLimit = (pos, ctx) =>
+    (STRATEGY.positionLimit ? STRATEGY.positionLimit(CFG, pos, ctx) : Infinity);
   const bestAvailableNow = () => (STRATEGY.bestAvailable ? STRATEGY.bestAvailable(algoCtx()) : {});
 
   function computeBaseline() {
@@ -1645,6 +1645,7 @@
     }
 
     const seen = {};
+    const limitCtx = algoCtx();
     for (const p of view) {
       if (bad.has(`${p.name}|${p.pos}`)) continue;
       // Once a K or DEF is on the roster we will essentially never want another.
@@ -1655,7 +1656,8 @@
       // No position may occupy more than QUEUE_SIZE-2 slots, so the queue always
       // holds a genuine alternative rather than variations on one decision.
       seen[p.pos] = (seen[p.pos] || 0) + 1;
-      if (seen[p.pos] > positionLimit(p.pos)) mark(p);
+      // One ctx for the whole loop; building it per row re-reads the DOM.
+      if (seen[p.pos] > positionLimit(p.pos, limitCtx)) mark(p);
     }
 
 
